@@ -1,6 +1,8 @@
 (function () {
   'use strict';
 
+  console.log('[pcmon] Dashboard loading...');
+
   /* ── Config ──────────────────────────────────────────────────────── */
   const HISTORY_SIZE = 40;
   const TABLE_UPDATE_INTERVAL = 10000;
@@ -434,6 +436,7 @@
 
   /* ── Master render ───────────────────────────────────────────────── */
   function renderAll(d) {
+    console.log('[pcmon] renderAll called', d ? 'with data' : 'no data');
     if (!d) return;
     cachedData = d;
 
@@ -445,10 +448,10 @@
     const ramCls = statusClass(ramPct);
     TXT(EL('sv-ram'), fmtNum(ramPct) + '%');
     TXT(EL('ss-ram'), fmtMem(d.ram_used_gb * 1024) + ' / ' + fmtMem(d.ram_total_gb * 1024));
-    EL('sv-ram')?.classList.replace('ok','') || true;
     COL(EL('sv-ram'), ramPct); FILL(EL('sf-ram'), ramPct);
     SBADGE(EL('sb-ram'), ramPct); SCARD(EL('sc-ram'), ramPct);
     unloadCard(EL('sc-ram'));
+    console.log('[pcmon] RAM section done, calling unloadCard for sc-ram:', !!EL('sc-ram'));
     TXT(EL('sv-ram-trend'), getTrend(ramPct, prev.ram));
     prev.ram = ramPct;
 
@@ -696,7 +699,7 @@
     ERRORS.push({ ts: Date.now(), type: 'js', msg: String(msg), src, line, col });
     if (ERRORS.length > MAX_ERRORS) ERRORS.shift();
     updateErrorDisplay();
-    return false;
+    return true;
   };
 
   window.onunhandledrejection = (e) => {
