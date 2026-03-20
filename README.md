@@ -1,15 +1,5 @@
 # pcmon
 
-[![CI](https://github.com/Harshit-Dhyani/pcmon/actions/workflows/ci.yml/badge.svg)](https://github.com/Harshit-Dhyani/pcmon/actions/workflows/ci.yml)
-[![Release](https://github.com/Harshit-Dhyani/pcmon/actions/workflows/release.yml/badge.svg)](https://github.com/Harshit-Dhyani/pcmon/actions/workflows/release.yml)
-[![Semantic Release](https://github.com/Harshit-Dhyani/pcmon/actions/workflows/semantic-release.yml/badge.svg)](https://github.com/Harshit-Dhyani/pcmon/actions/workflows/semantic-release.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![npm](https://img.shields.io/npm/dt/pcmon?label=npm)](https://www.npmjs.com/package/pcmon)
-[![npm version](https://img.shields.io/npm/v/pcmon?label=npm)](https://www.npmjs.com/package/pcmon)
-[![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-yellow.svg)](https://conventionalcommits.org)
-[![GitHub Stars](https://img.shields.io/github/stars/Harshit-Dhyani/pcmon?style=flat)](https://github.com/Harshit-Dhyani/pcmon/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/Harshit-Dhyani/pcmon?style=flat)](https://github.com/Harshit-Dhyani/pcmon/network/members)
-
 Local-first Windows system monitoring and diagnostics tool.
 
 ## Quick start
