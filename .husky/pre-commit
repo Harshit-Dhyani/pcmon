@@ -1,0 +1,16 @@
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+# Check for console.log
+if grep -r "console.log" --include="*.js" --include="*.ts" .; then
+  echo "Found console.log statements. Please remove before committing."
+  exit 1
+fi
+
+# Check for debugger statements
+if grep -r "debugger" --include="*.js" --include="*.ts" .; then
+  echo "Found debugger statements. Please remove before committing."
+  exit 1
+fi
+
+echo "Pre-commit checks passed!"
