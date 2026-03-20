@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PC Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────────────── -->
+<header class="hdr">
+  <div class="hdr-left">
+    <div class="pip"></div>
+    <div class="hdr-logo">PC&nbsp;<em>Monitor</em></div>
+    <div class="host-badge" id="hdr-host">—</div>
+  </div>
+  <div class="hdr-right">
+    <span class="rf-lbl">Refresh</span>
+    <select class="rf-sel" id="rf-sel">
+      <option value="2000" selected>2 s</option>
+      <option value="1000">1 s</option>
+      <option value="5000">5 s</option>
+      <option value="10000">10 s</option>
+    </select>
+    <div class="ts" id="ts">--:--:--</div>
+  </div>
+</header>
+
+<!-- ── Nav ────────────────────────────────────────────────────────── -->
+<nav class="nav">
+  <div class="ntab on" data-page="overview">Overview</div>
+  <div class="ntab" data-page="ram">RAM</div>
+  <div class="ntab" data-page="cpu">CPU</div>
+  <div class="ntab" data-page="disk">Disk &amp; I/O</div>
+  <div class="ntab" data-page="gpu">GPU</div>
+  <div class="ntab" data-page="groups">Groups</div>
+  <div class="ntab" data-page="suspicious">Suspicious</div>
+  <div class="ntab" data-page="services">Services</div>
+  <div class="ntab" data-page="system">System</div>
+  <div class="ntab" data-page="procs">All Processes</div>
+</nav>
+
+<!-- ── Alerts ─────────────────────────────────────────────────────── -->
+<div class="alerts">
+  <div class="al al-bad"  id="al-pg"><span>⚠</span><span>Page faults spiking —&nbsp;<span id="al-pg-t"></span>/s. Possible memory pressure.</span></div>
+  <div class="al al-warn" id="al-cm"><span>⚠</span><span>Commit charge high —&nbsp;<span id="al-cm-t"></span>%. System may be over-committed.</span></div>
+  <div class="al al-warn" id="al-np"><span>⚠</span><span>Non-paged pool elevated —&nbsp;<span id="al-np-t"></span>&nbsp;MB. Possible driver leak.</span></div>
+  <div class="al al-warn" id="al-gpu"><span>⚠</span><span>GPU 3D engine heavy —&nbsp;<span id="al-gpu-t"></span>%.</span></div>
+</div>
+
+<!-- ── Pages ──────────────────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- ── OVERVIEW ─────────────────────────────────────────────────── -->
+  <div id="pg-overview" class="pg on">
+    <div class="strip">
+
+      <!-- RAM card -->
+      <div class="scard loading" id="sc-ram">
+        <div class="scard-top">
+          <span class="scard-lbl">RAM</span>
+          <span class="sbadge" id="sb-ram"></span>
+        </div>
+        <div class="sk sk-val"></div>
+        <div class="sk sk-sub"></div>
+        <div class="sval" id="sv-ram">—</div>
+        <div class="ssub" id="ss-ram">—</div>
+        <div class="strack"><div class="sfill" id="sf-ram"></div></div>
+        <div class="sk sk-spark"></div>
+        <canvas class="spark" id="spk-ram"></canvas>
+      </div>
+
+      <!-- CPU card -->
+      <div class="scard loading" id="sc-cpu">
+        <div class="scard-top">
+          <span class="scard-lbl">CPU</span>
+          <span class="sbadge" id="sb-cpu"></span>
+        </div>
+        <div class="sk sk-val"></div>
+        <div class="sk sk-sub"></div>
+        <div class="sval" id="sv-cpu">—</div>
+        <div class="ssub">All logical cores</div>
+        <div class="strack"><div class="sfill" id="sf-cpu"></div></div>
+        <div class="sk sk-spark"></div>
+        <canvas class="spark" id="spk-cpu"></canvas>
+      </div>
+
+      <!-- Disk card -->
+      <div class="scard loading" id="sc-disk">
+        <div class="scard-top">
+          <span class="scard-lbl">Disk</span>
+          <span class="sbadge" id="sb-disk"></span>
+        </div>
+        <div class="sk sk-val"></div>
+        <div class="sk sk-sub"></div>
+        <div class="sval" id="sv-disk">—</div>
+        <div class="ssub" id="ss-disk">—</div>
+        <div class="strack"><div class="sfill" id="sf-disk"></div></div>
+        <div class="sk sk-spark"></div>
+        <canvas class="spark" id="spk-disk"></canvas>
+      </div>
+
+      <!-- Commit card -->
+      <div class="scard loading" id="sc-cm">
+        <div class="scard-top">
+          <span class="scard-lbl">Commit</span>
+          <span class="sbadge" id="sb-cm"></span>
+        </div>
+        <div class="sk sk-val"></div>
+        <div class="sk sk-sub"></div>
+        <div class="sval" id="sv-cm">—</div>
+        <div class="ssub" id="ss-cm">—</div>
+        <div class="strack"><div class="sfill" id="sf-cm"></div></div>
+        <div class="sk sk-spark"></div>
+        <canvas class="spark" id="spk-cm"></canvas>
+      </div>
+
+    </div><!-- /strip -->
+
+    <div class="grid2">
+      <!-- Top processes -->
+      <div class="pnl">
+        <div class="pnl-head">
+          <span class="pnl-title">Top Processes — RAM</span>
+          <span class="pnl-badge" id="ov-pc">
+            <span class="sk sk-badge" style="display:inline-block;width:70px;height:16px"></span>
+          </span>
+        </div>
+        <div class="tbl-scroll" id="ov-tbl-wrap">
+          <!-- Skeleton rows -->
+          <div style="padding:10px 14px;display:flex;flex-direction:column;gap:6px" id="ov-tbl-sk">
+            <div class="sk sk-row"></div><div class="sk sk-row"></div>
+            <div class="sk sk-row"></div><div class="sk sk-row"></div>
+            <div class="sk sk-row"></div>
+          </div>
+          <table id="ov-tbl" style="display:none"></table>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <!-- Disk drives -->
+        <div class="pnl">
+          <div class="pnl-head"><span class="pnl-title">Disk Drives</span></div>
+          <div class="pnl-body" id="ov-disks">
+            <div class="sk sk-row"></div>
+            <div class="sk sk-row" style="margin-top:6px"></div>
+          </div>
+        </div>
+        <!-- I/O -->
+        <div class="pnl">
+          <div class="pnl-head"><span class="pnl-title">I/O &amp; Network</span></div>
+          <div class="pnl-body">
+            <div class="io-strip" id="ov-io">
+              <div class="sk" style="height:52px;border-radius:8px"></div>
+              <div class="sk" style="height:52px;border-radius:8px"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── RAM ──────────────────────────────────────────────────────── -->
+  <div id="pg-ram" class="pg">
+    <div class="strip">
+      <div class="scard loading" id="r-sc-ram">
+        <div class="scard-top"><span class="scard-lbl">RAM In Use</span><span class="sbadge" id="r-sb-ram"></span></div>
+        <div class="sk sk-val"></div><div class="sk sk-sub"></div>
+        <div class="sval" id="r-sv-ram">—</div>
+        <div class="ssub" id="r-ss-ram">—</div>
+        <div class="strack"><div class="sfill" id="r-sf-ram"></div></div>
+      </div>
+      <div class="scard ok">
+        <div class="scard-top"><span class="scard-lbl">Available</span></div>
+        <div class="sval ok" id="r-avail">—</div>
+        <div class="ssub">MB free physical RAM</div>
+      </div>
+      <div class="scard loading" id="r-sc-cm">
+        <div class="scard-top"><span class="scard-lbl">Commit Charge</span><span class="sbadge" id="r-sb-cm"></span></div>
+        <div class="sk sk-val"></div><div class="sk sk-sub"></div>
+        <div class="sval" id="r-sv-cm">—</div>
+        <div class="ssub" id="r-ss-cm">—</div>
+        <div class="strack"><div class="sfill" id="r-sf-cm"></div></div>
+      </div>
+      <div class="scard loading" id="r-sc-pg">
+        <div class="scard-top"><span class="scard-lbl">Pages / sec</span></div>
+        <div class="sk sk-val"></div><div class="sk sk-sub"></div>
+        <div class="sval" id="r-sv-pg">—</div>
+        <div class="ssub" id="r-ss-pg">—</div>
+      </div>
+    </div>
+
+    <div class="pool-grid">
+      <div class="pool-card">
+        <div class="pool-lbl">Paged Pool</div>
+        <div class="pool-val" id="r-paged">—</div>
+        <div class="pool-desc">Kernel memory that can page to disk.</div>
+      </div>
+      <div class="pool-card">
+        <div class="pool-lbl">Non-Paged Pool</div>
+        <div class="pool-val" id="r-nonpaged">—</div>
+        <div class="pool-desc">Cannot be paged. Growing = driver leak.</div>
+      </div>
+    </div>
+
+    <div class="pnl">
+      <div class="pnl-head">
+        <span class="pnl-title">Top 30 by Private Memory</span>
+        <input class="sbar" id="s-ram" placeholder="Filter processes…">
+      </div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="r-tbl-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+        </div>
+        <table id="r-tbl" style="display:none"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CPU ──────────────────────────────────────────────────────── -->
+  <div id="pg-cpu" class="pg">
+    <div class="strip">
+      <div class="scard loading" id="c-sc-cpu" style="grid-column:span 2">
+        <div class="scard-top"><span class="scard-lbl">CPU Total</span><span class="sbadge" id="c-sb-cpu"></span></div>
+        <div class="sk sk-val"></div><div class="sk sk-sub"></div>
+        <div class="sval" id="c-sv-cpu">—</div>
+        <div class="ssub">All logical cores combined</div>
+        <div class="strack"><div class="sfill" id="c-sf-cpu"></div></div>
+        <canvas class="spark" id="spk-cpu2"></canvas>
+      </div>
+      <div class="scard loading" id="c-sc-pg">
+        <div class="scard-top"><span class="scard-lbl">Pages / sec</span></div>
+        <div class="sk sk-val"></div><div class="sk sk-sub"></div>
+        <div class="sval" id="c-sv-pg">—</div>
+        <div class="ssub">RAM-to-disk swap load</div>
+      </div>
+      <div class="scard ok">
+        <div class="scard-top"><span class="scard-lbl">Disk Queue</span></div>
+        <div class="sval ok" id="c-queue">—</div>
+        <div class="ssub">Pending I/O requests</div>
+      </div>
+    </div>
+
+    <div class="pnl">
+      <div class="pnl-head"><span class="pnl-title">Top 20 by CPU Time</span></div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="c-tbl-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="c-tbl" style="display:none"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DISK & I/O ────────────────────────────────────────────────── -->
+  <div id="pg-disk" class="pg">
+    <div class="io-strip" style="margin-bottom:16px" id="disk-io-strip">
+      <div class="sk" style="height:68px;border-radius:10px"></div>
+      <div class="sk" style="height:68px;border-radius:10px"></div>
+      <div class="sk" style="height:68px;border-radius:10px"></div>
+      <div class="sk" style="height:68px;border-radius:10px"></div>
+    </div>
+
+    <div class="grid2">
+      <div class="pnl">
+        <div class="pnl-head"><span class="pnl-title">Drives</span></div>
+        <div class="pnl-body" id="disk-drives">
+          <div class="sk sk-row"></div>
+          <div class="sk sk-row" style="margin-top:6px"></div>
+        </div>
+      </div>
+
+      <div class="pnl">
+        <div class="pnl-head"><span class="pnl-title">Activity History</span></div>
+        <div class="pnl-body" style="display:flex;flex-direction:column;gap:20px">
+          <div>
+            <div style="font-size:9px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;font-weight:700">Disk Activity %</div>
+            <canvas class="spark" id="disk-spk" style="height:60px;width:100%;display:block"></canvas>
+          </div>
+          <div>
+            <div style="font-size:9px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;font-weight:700">Network Activity (KB/s)</div>
+            <canvas class="spark" id="net-spk" style="height:60px;width:100%;display:block"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── GPU ──────────────────────────────────────────────────────── -->
+  <div id="pg-gpu" class="pg">
+    <div class="strip">
+      <div class="scard" id="g-sc-avail">
+        <div class="scard-top"><span class="scard-lbl">GPU Available</span></div>
+        <div class="sval" id="g-avail">—</div>
+        <div class="ssub" id="g-status">—</div>
+      </div>
+      <div class="scard" id="g-sc-3d">
+        <div class="scard-top"><span class="scard-lbl">3D Engine</span></div>
+        <div class="sval" id="g-3d">—</div>
+      </div>
+      <div class="scard" id="g-sc-vdec">
+        <div class="scard-top"><span class="scard-lbl">Video Decode</span></div>
+        <div class="sval" id="g-vdec">—</div>
+      </div>
+      <div class="scard" id="g-sc-venc">
+        <div class="scard-top"><span class="scard-lbl">Video Encode</span></div>
+        <div class="sval" id="g-venc">—</div>
+      </div>
+    </div>
+    <div class="pnl">
+      <div class="pnl-head"><span class="pnl-title">GPU Adapters</span></div>
+      <div class="pnl-body" id="gpu-adapters">
+        <div class="sk sk-row"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── GROUPS ───────────────────────────────────────────────────── -->
+  <div id="pg-groups" class="pg">
+    <div class="strip">
+      <div class="scard" id="grp-browser">
+        <div class="scard-top"><span class="scard-lbl">Browser / Electron</span></div>
+        <div class="sval" id="grp-browser-val">—</div>
+        <div class="ssub" id="grp-browser-count">0 processes</div>
+      </div>
+      <div class="scard" id="grp-dev">
+        <div class="scard-top"><span class="scard-lbl">Dev Tools</span></div>
+        <div class="sval" id="grp-dev-val">—</div>
+        <div class="ssub" id="grp-dev-count">0 processes</div>
+      </div>
+      <div class="scard" id="grp-sec">
+        <div class="scard-top"><span class="scard-lbl">Security Tools</span></div>
+        <div class="sval" id="grp-sec-val">—</div>
+        <div class="ssub" id="grp-sec-count">0 processes</div>
+      </div>
+    </div>
+    <div class="pnl">
+      <div class="pnl-head"><span class="pnl-title">Group Insights</span></div>
+      <div class="pnl-body" id="group-insights">
+        <div class="sk sk-row"></div>
+        <div class="sk sk-row" style="margin-top:6px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SUSPICIOUS ───────────────────────────────────────────────── -->
+  <div id="pg-suspicious" class="pg">
+    <div class="pnl">
+      <div class="pnl-head">
+        <span class="pnl-title">Suspicious / Dev / Browser / Security</span>
+        <span class="pnl-badge" id="sus-count">0</span>
+      </div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="sus-tbl-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="sus-tbl" style="display:none"></table>
+      </div>
+      <div class="footer-note">Groups: Node, Bun, browsers, JetBrains IDEs, AI helpers, Defender, Malwarebytes, GlassWire, Portmaster, VMware, NVIDIA</div>
+    </div>
+  </div>
+
+  <!-- ── SERVICES ─────────────────────────────────────────────────── -->
+  <div id="pg-services" class="pg">
+    <div class="pnl" style="margin-bottom:16px">
+      <div class="pnl-head"><span class="pnl-title">Heavy Services (top RAM PIDs)</span></div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="svc-tbl-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="svc-tbl" style="display:none"></table>
+      </div>
+    </div>
+    <div class="pnl">
+      <div class="pnl-head"><span class="pnl-title">Startup Items</span></div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="startup-tbl-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+        </div>
+        <table id="startup-tbl" style="display:none"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SYSTEM ───────────────────────────────────────────────────── -->
+  <div id="pg-system" class="pg">
+    <div class="pnl" style="margin-bottom:16px">
+      <div class="pnl-head"><span class="pnl-title">System Summary</span></div>
+      <div class="pnl-body" id="sys-summary">
+        <div class="sk sk-row"></div><div class="sk sk-row" style="margin-top:6px"></div>
+        <div class="sk sk-row" style="margin-top:6px"></div>
+      </div>
+    </div>
+    <div class="pnl" style="margin-bottom:16px">
+      <div class="pnl-head"><span class="pnl-title">Page File</span></div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="pagefile-tbl-sk">
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="pagefile-tbl" style="display:none"></table>
+      </div>
+    </div>
+    <div class="pnl">
+      <div class="pnl-head"><span class="pnl-title">PowerShell Profiles</span></div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="profiles-tbl-sk">
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="profiles-tbl" style="display:none"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ALL PROCESSES ────────────────────────────────────────────── -->
+  <div id="pg-procs" class="pg">
+    <div class="sec-head" style="margin-bottom:14px">
+      <input class="sbar" id="s-all" placeholder="Filter by name…" style="width:260px">
+      <span class="pnl-badge" id="all-pc">—</span>
+    </div>
+    <div class="pnl">
+      <div class="tbl-scroll" style="max-height:600px">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="all-tbl-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="all-tbl" style="display:none"></table>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /main -->
+
+<script src="dashboard.js"></script>
+</body>
+</html>
