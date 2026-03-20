@@ -7,9 +7,17 @@
   let intervalId = null;
   let firstLoad = true;
 
-  const history = { ram: [], cpu: [], disk: [], net: [] };
+  const history = { ram: [], cpu: [], disk: [], net: [], commit: [] };
+  const prev = { ram: 0, cpu: 0, disk: 0, commit: 0 };
 
   /* ── Helpers ─────────────────────────────────────────────────────── */
+  function getTrend(current, previous) {
+    if (current == null || previous == null) return '';
+    const diff = current - previous;
+    if (diff > 0) return '↑' + diff.toFixed(1);
+    if (diff < 0) return '↓' + Math.abs(diff).toFixed(1);
+    return '→';
+  }
   const EL  = id => document.getElementById(id);
   const TXT = (el, v) => { if (el) el.textContent = v; };
   const PCT = (el, v) => { if (el) el.style.width = Math.min(100, Math.max(0, v)) + '%'; };
@@ -172,6 +180,7 @@
     drawSparkline('spk-disk', history.disk, sparkColorVar(statusClass(diskPct)));
     drawSparkline('disk-spk', history.disk, '--info');
     drawSparkline('net-spk',  history.net,  '--ok');
+    drawSparkline('spk-cm', history.commit, sparkColorVar(statusClass(history.commit.slice(-1)[0] || 0)));
   }
 
   /* ── Table rendering ─────────────────────────────────────────────── */
@@ -268,6 +277,8 @@
     COL(EL('sv-ram'), ramPct); FILL(EL('sf-ram'), ramPct);
     SBADGE(EL('sb-ram'), ramPct); SCARD(EL('sc-ram'), ramPct);
     unloadCard(EL('sc-ram'));
+    TXT(EL('sv-ram-trend'), getTrend(ramPct, prev.ram));
+    prev.ram = ramPct;
 
     /* RAM page */
     TXT(EL('r-sv-ram'), fmtMem(d.ram_used_gb * 1024));
@@ -283,6 +294,8 @@
     COL(EL('sv-cpu'), cpuPct); FILL(EL('sf-cpu'), cpuPct);
     SBADGE(EL('sb-cpu'), cpuPct); SCARD(EL('sc-cpu'), cpuPct);
     unloadCard(EL('sc-cpu'));
+    TXT(EL('sv-cpu-trend'), getTrend(cpuPct, prev.cpu));
+    prev.cpu = cpuPct;
 
     TXT(EL('c-sv-cpu'), fmtNum(cpuPct) + '%');
     COL(EL('c-sv-cpu'), cpuPct); FILL(EL('c-sf-cpu'), cpuPct);
@@ -299,6 +312,8 @@
     COL(EL('sv-disk'), diskPct); FILL(EL('sf-disk'), diskPct);
     SBADGE(EL('sb-disk'), diskPct); SCARD(EL('sc-disk'), diskPct);
     unloadCard(EL('sc-disk'));
+    TXT(EL('sv-disk-trend'), getTrend(diskPct, prev.disk));
+    prev.disk = diskPct;
 
     /* ── Commit ── */
     const cmPct = d.commit_pct || 0;
@@ -307,6 +322,8 @@
     COL(EL('sv-cm'), cmPct); FILL(EL('sf-cm'), cmPct);
     SBADGE(EL('sb-cm'), cmPct); SCARD(EL('sc-cm'), cmPct);
     unloadCard(EL('sc-cm'));
+    TXT(EL('sv-cm-trend'), getTrend(cmPct, prev.commit));
+    prev.commit = cmPct;
 
     const cmPct2 = d.commit_pct || 0;
     TXT(EL('r-sv-cm'), fmtNum(cmPct2) + '%');
@@ -326,6 +343,7 @@
     updateHistory('ram',  ramPct);
     updateHistory('cpu',  cpuPct);
     updateHistory('disk', diskPct);
+    updateHistory('commit', d.commit_pct || 0);
     updateHistory('net',  (d.net_sent_kb || 0) + (d.net_recv_kb || 0));
 
     /* ── Sparklines ── */
@@ -395,6 +413,14 @@
     /* GPU */
     const gpu = d.gpu || {};
     TXT(EL('g-avail'),  gpu.available ? 'Yes' : 'No');
+    const gpuSection = EL('pg-gpu');
+    if (gpuSection) {
+      if (gpu && gpu.available) {
+        gpuSection.classList.remove('gpu-unavailable');
+      } else {
+        gpuSection.classList.add('gpu-unavailable');
+      }
+    }
     TXT(EL('g-status'), gpu.available ? (gpu.adapters?.[0]?.status || 'Active') : 'N/A');
     const eng = gpu.eng_type_totals || {};
     TXT(EL('g-3d'),   eng['3d']          !== undefined ? eng['3d'].toFixed(1)          + '%' : 'N/A');
@@ -474,29 +500,80 @@
     renderTable(EL('all-tbl'), allRows, ['Name','PID','WS','Private','CPU','Threads','Handles','Path']);
     TXT(EL('all-pc'), (d.total_procs || 0) + ' processes');
 
-    console.log('[pcmon] Alerts section');
     /* Alerts */
     setAlert('al-pg', 1000, d.pages_sec,    'al-pg-t');
     setAlert('al-cm', 80,   d.commit_pct,   'al-cm-t');
     setAlert('al-np', 500,  d.non_paged_mb, 'al-np-t');
   }
 
+  /* ── Error tracking ─────────────────────────────────────────────── */
+  const ERRORS = [];
+  const MAX_ERRORS = 100;
+
+  window.onerror = (msg, src, line, col, err) => {
+    ERRORS.push({ ts: Date.now(), type: 'js', msg: String(msg), src, line, col });
+    if (ERRORS.length > MAX_ERRORS) ERRORS.shift();
+    updateErrorDisplay();
+    return false;
+  };
+
+  window.onunhandledrejection = (e) => {
+    ERRORS.push({ ts: Date.now(), type: 'promise', msg: String(e.reason) });
+    if (ERRORS.length > MAX_ERRORS) ERRORS.shift();
+    updateErrorDisplay();
+  };
+
+  function updateErrorDisplay() {
+    const el = EL('js-errors');
+    if (!el) return;
+    if (ERRORS.length === 0) {
+      el.innerHTML = '<div class="note">No errors detected</div>';
+      return;
+    }
+    el.innerHTML = ERRORS.slice(-20).reverse().map(e => {
+      const d = new Date(e.ts);
+      const time = d.toLocaleTimeString();
+      const info = e.line ? ` at ${e.src}:${e.line}` : '';
+      return `<div class="err-entry ${e.type}"><span class="err-time">${time}</span><span class="err-type">${e.type.toUpperCase()}</span><span class="err-msg">${esc(e.msg)}${info}</span></div>`;
+    }).join('');
+  }
+
+  async function fetchErrors() {
+    try {
+      const res = await fetch('/errors');
+      if (!res.ok) return;
+      const data = await res.json();
+      const psErrEl = EL('ps-errors');
+      if (psErrEl && data.error_count > 0) {
+        psErrEl.innerHTML = `<div class="err-banner">PowerShell errors: ${data.error_count} | <a href="/logs" target="_blank">View logs</a> | <a href="/debug" target="_blank">Debug</a></div>`;
+      }
+      ERRORS.push({ ts: Date.now(), type: 'api', msg: `API Error Count: ${data.error_count}` });
+      if (ERRORS.length > MAX_ERRORS) ERRORS.shift();
+      updateErrorDisplay();
+    } catch {}
+  }
+
   /* ── Fetch ───────────────────────────────────────────────────────── */
   async function fetchData() {
     try {
-      console.log('[pcmon] Fetching /data...');
       const res = await fetch('/data');
-      console.log('[pcmon] Response status:', res.status);
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
-      console.log('[pcmon] Data received:', data);
-      console.log('[pcmon] Calling renderAll...');
       renderAll(data);
-      console.log('[pcmon] renderAll complete');
+      fetchErrors();
     } catch (e) {
-      console.error('[pcmon] Fetch error:', e);
+      ERRORS.push({ ts: Date.now(), type: 'fetch', msg: e.message });
+      if (ERRORS.length > MAX_ERRORS) ERRORS.shift();
+      updateErrorDisplay();
     }
   }
+
+  window.pcmonDebug = {
+    errors: ERRORS,
+    fetch: fetchData,
+    fetchErrors,
+    config: { refreshRate: refreshInterval, url: '' }
+  };
 
   /* ── Tabs ────────────────────────────────────────────────────────── */
   function initTabs() {
@@ -545,6 +622,126 @@
     filterTable('s-all', 'all-tbl');
   }
 
+  /* ── Snapshots ───────────────────────────────────────────────────── */
+  let selectedSnapshotId = null;
+
+  async function loadSnapshots() {
+    try {
+      const res = await fetch('/api/snapshots');
+      if (!res.ok) return;
+      const list = await res.json();
+      const tbl = EL('snapshots-tbl');
+      if (!tbl) return;
+      tbl.innerHTML = '';
+      const thead = tbl.createTHead();
+      const hdr = thead.insertRow();
+      ['Time', 'Label', 'Actions'].forEach(c => {
+        const th = document.createElement('th');
+        th.textContent = c;
+        hdr.appendChild(th);
+      });
+      const tbody = tbl.createTBody();
+      (list || []).forEach(s => {
+        const tr = tbody.insertRow();
+        tr.innerHTML = `<td>${esc(s.ts)}</td><td>${esc(s.label || '—')}</td>`;
+        const td = tr.insertCell();
+        const btnCompare = document.createElement('button');
+        btnCompare.className = 'btn btn-sm';
+        btnCompare.textContent = 'Compare';
+        btnCompare.onclick = () => compareSnapshot(s.id);
+        td.appendChild(btnCompare);
+        const btnJson = document.createElement('button');
+        btnJson.className = 'btn btn-sm';
+        btnJson.textContent = 'JSON';
+        btnJson.onclick = () => exportSnapshot(s.id, s.label, 'json');
+        btnJson.style.marginLeft = '4px';
+        td.appendChild(btnJson);
+        const btnCsv = document.createElement('button');
+        btnCsv.className = 'btn btn-sm';
+        btnCsv.textContent = 'CSV';
+        btnCsv.onclick = () => exportSnapshot(s.id, s.label, 'csv');
+        btnCsv.style.marginLeft = '4px';
+        td.appendChild(btnCsv);
+        if (s.id === selectedSnapshotId) tr.classList.add('selected');
+      });
+    } catch {}
+  }
+
+  async function saveSnapshot() {
+    const labelInput = EL('snap-label');
+    const msgEl = EL('snap-msg');
+    const label = labelInput ? labelInput.value.trim() : '';
+    try {
+      const res = await fetch('/api/snapshots', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label })
+      });
+      if (res.ok) {
+        const result = await res.json();
+        selectedSnapshotId = result.id;
+        if (labelInput) labelInput.value = '';
+        if (msgEl) { msgEl.textContent = 'Snapshot saved!'; setTimeout(() => { if (msgEl) msgEl.textContent = ''; }, 2000); }
+        loadSnapshots();
+      }
+    } catch (e) {
+      if (msgEl) msgEl.textContent = 'Error saving snapshot';
+    }
+  }
+
+  async function compareSnapshot(id) {
+    selectedSnapshotId = id;
+    loadSnapshots();
+    const resultEl = EL('compare-result');
+    if (!resultEl) return;
+    resultEl.innerHTML = '<div class="note">Comparing...</div>';
+    try {
+      const res = await fetch(`/api/snapshots/${id}/compare`, { method: 'POST' });
+      if (!res.ok) throw new Error('Failed');
+      const data = await res.json();
+      if (data.error) {
+        resultEl.innerHTML = `<div class="note" style="color:var(--bad)">${esc(data.error)}</div>`;
+        return;
+      }
+      const changes = data.changes || [];
+      if (changes.length === 0) {
+        resultEl.innerHTML = '<div class="note">No changes detected.</div>';
+        return;
+      }
+      let html = '<div class="compare-summary"><strong>Snapshot:</strong> ' + esc(data.snapshot_ts) + ' → <strong>Now:</strong> ' + esc(data.current_ts) + '</div>';
+      changes.forEach(c => {
+        const diff = c.diff > 0 ? '+' + c.diff : c.diff;
+        const color = c.direction === 'increased' || c.direction === 'new' ? 'var(--bad)' : c.direction === 'decreased' || c.direction === 'gone' ? 'var(--ok)' : 'var(--accent)';
+        let extra = '';
+        if (c.processes) {
+          extra = '<div class="compare-procs">' + c.processes.slice(0,5).map(p => `<span>${esc(p.name)} (${fmtMem(p.ws_mb * 1024)})</span>`).join('') + (c.count > 5 ? `<span>+${c.count-5} more</span>` : '') + '</div>';
+        }
+        html += `<div class="compare-item"><span class="compare-name">${esc(c.name)}</span><span class="compare-diff" style="color:${color}">${diff}${c.old !== undefined ? ' (' + c.old + '→' + c.new + '%)' : ''}</span>${extra}</div>`;
+      });
+      resultEl.innerHTML = html;
+    } catch (e) {
+      resultEl.innerHTML = '<div class="note" style="color:var(--bad)">Error comparing snapshot</div>';
+    }
+  }
+
+  function exportSnapshot(id, label, format) {
+    const safeLabel = (label || 'no_label').replace(/[^\w\-_]/g, '_');
+    const filename = `pcmon_snapshot_${id}_${safeLabel}.${format}`;
+    const url = `/api/snapshots/${id}/export${format === 'csv' ? '.csv' : ''}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  function initSnapshots() {
+    const saveBtn = EL('btn-save-snap');
+    if (saveBtn) saveBtn.addEventListener('click', saveSnapshot);
+    loadSnapshots();
+  }
+
   /* ── Resize handler ──────────────────────────────────────────────── */
   let resizeTimer;
   window.addEventListener('resize', () => {
@@ -563,6 +760,7 @@
     initTabs();
     initRefreshSelector();
     initSearchFilters();
+    initSnapshots();
     fetchData();
     intervalId = setInterval(fetchData, refreshInterval);
   }
