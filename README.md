@@ -1,5 +1,10 @@
 # pcmon
 
+[![CI](https://github.com/Harshit-Dhyani/pcmon/actions/workflows/ci.yml/badge.svg)](https://github.com/Harshit-Dhyani/pcmon/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/Harshit-Dhyani/pcmon/actions/workflows/codeql.yml/badge.svg)](https://github.com/Harshit-Dhyani/pcmon/actions/workflows/codeql.yml)
+[![MIT License](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![npm version](https://img.shields.io/badge/npm-v1.0.0-blue.svg)](https://www.npmjs.com/package/pcmon)
+
 Local-first Windows system monitoring and diagnostics tool.
 
 ## Quick start

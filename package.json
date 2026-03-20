@@ -20,7 +20,13 @@
     "sync:skills": "bun run scripts/sync-skills.ts"
   },
   "devDependencies": {
-    "copyfiles": "^2.4.1"
+    "@semantic-release/commit-analyzer": "^13.0.0",
+    "@semantic-release/exec": "^6.0.3",
+    "@semantic-release/github": "^10.0.0",
+    "@semantic-release/npm": "^12.0.0",
+    "@semantic-release/release-notes-generator": "^14.0.0",
+    "copyfiles": "^2.4.1",
+    "semantic-release": "^24.0.0"
   },
   "files": [
     "pcmon.ps1",
