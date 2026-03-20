@@ -1,14 +1,11 @@
 # pcmon
 
 [![CI](https://github.com/Harshit-Dhyani/pcmon/actions/workflows/ci.yml/badge.svg)](https://github.com/Harshit-Dhyani/pcmon/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/Harshit-Dhyani/pcmon/actions/workflows/codeql.yml/badge.svg)](https://github.com/Harshit-Dhyani/pcmon/actions/workflows/codeql.yml)
 [![Release](https://github.com/Harshit-Dhyani/pcmon/actions/workflows/release.yml/badge.svg)](https://github.com/Harshit-Dhyani/pcmon/actions/workflows/release.yml)
 [![Semantic Release](https://github.com/Harshit-Dhyani/pcmon/actions/workflows/semantic-release.yml/badge.svg)](https://github.com/Harshit-Dhyani/pcmon/actions/workflows/semantic-release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![npm](https://img.shields.io/npm/dt/pcmon?label=npm)](https://www.npmjs.com/package/pcmon)
 [![npm version](https://img.shields.io/npm/v/pcmon?label=npm)](https://www.npmjs.com/package/pcmon)
-[![npm](https://img.shields.io/badge/bun-v1.0.0-brown.svg)](https://bun.sh)
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-yellow.svg)](https://conventionalcommits.org)
 [![GitHub Stars](https://img.shields.io/github/stars/Harshit-Dhyani/pcmon?style=flat)](https://github.com/Harshit-Dhyani/pcmon/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/Harshit-Dhyani/pcmon?style=flat)](https://github.com/Harshit-Dhyani/pcmon/network/members)
@@ -51,8 +48,11 @@ pcmon/           -- root
   web/
     index.html   -- dashboard HTML (served from disk)
     dashboard.js -- dashboard UI logic (served from disk)
+    dashboard.css -- dashboard styles (served from disk)
   bin/
     pcmon.ps1    -- CLI wrapper shim for future package-manager install
+  scripts/
+    sync-skills.ts -- skill sync script for .kilo compatibility
 ```
 
 ## Modes
