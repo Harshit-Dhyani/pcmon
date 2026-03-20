@@ -210,6 +210,8 @@ function Get-PowerShellProfileInfo {
 }
 
 function Get-GpuData {
+    param($Samples)
+    
     $adapters = Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM, Status
     $gpuResult = @{
         available = $false
@@ -239,8 +241,8 @@ function Get-GpuData {
     }
 
     try {
-        $memSamples = @()
-        try { $memSamples = (Get-Counter '\GPU Adapter Memory(*)\Dedicated Usage' -ErrorAction SilentlyContinue).CounterSamples } catch { $script:ErrorCount++ }
+        $memSamples = @($Samples | Where-Object { $_.Path -like '*GPU*Adapter*Memory*Dedicated*Usage*' })
+        $engSamples = @($Samples | Where-Object { $_.Path -like '*GPU*Engine*Utilization*Percentage*' })
 
         foreach ($adapter in $adapters) {
             $dedBytes = 0
@@ -262,9 +264,7 @@ function Get-GpuData {
             $gpuResult.dedicated_total_gb += $totalGB
         }
 
-        try {
-            $engSamples = (Get-Counter '\GPU Engine(*)\Utilization Percentage' -ErrorAction SilentlyContinue).CounterSamples
-            foreach ($s in $engSamples) {
+        foreach ($s in $engSamples) {
                 $val = $s.CookedValue
                 if ($null -eq $val -or $val -eq 0) { continue }
                 $type = 'other'
@@ -278,10 +278,10 @@ function Get-GpuData {
                 $gpuResult.eng_type_totals[$type] += $val
                 $gpuResult.eng_type_count[$type]++
             }
-        } catch {}
+        } catch { $script:ErrorCount++ }
 
         $gpuResult.available = $gpuResult.adapters.Count -gt 0
-    } catch {}
+    } catch { $script:ErrorCount++ }
 
     return $gpuResult
 }
@@ -351,7 +351,19 @@ function Get-InsightText {
     return @($insights)
 }
 
+function Get-CachedStaticData {
+    $now = Get-Date
+    if ($script:CacheExpiry -gt $now) { return }
+    $script:CachedDrives = @(Get-CimInstance Win32_LogicalDisk -Property DeviceID, VolumeName, FileSystem, Size, FreeSpace | Where-Object { $_.DriveType -eq 3 })
+    $script:CachedServices = @(Get-CimInstance Win32_Service -Property Name, DisplayName, State, StartMode, ProcessId)
+    $script:CachedStartup = @(Get-CimInstance Win32_StartupCommand -Property Name, Command, Location, User)
+    $script:CachedOS = Get-CimInstance Win32_OperatingSystem
+    $script:CacheExpiry = $now.AddSeconds(30)
+}
+
 function Get-LiveData {
+    Get-CachedStaticData
+
     $counterPaths = @(
         '\Memory\Available MBytes',
         '\Memory\Committed Bytes',
@@ -371,7 +383,6 @@ function Get-LiveData {
         '\Network Interface(*)\Bytes Received/sec'
     )
 
-    $allCounterPaths = $counterPaths
     $gpuCounterPaths = @('\GPU Adapter Memory(*)\Dedicated Usage', '\GPU Engine(*)\Utilization Percentage')
     $allCounterPaths = @($counterPaths) + @($gpuCounterPaths)
 
@@ -379,11 +390,11 @@ function Get-LiveData {
     try {
         $counters = Get-Counter $allCounterPaths -ErrorAction SilentlyContinue
         if ($counters) { $samples = $counters.CounterSamples }
-    } catch {}
+    } catch { $script:ErrorCount++ }
 
     if (-not $samples) { $samples = @() }
 
-    $os = Get-CimInstance Win32_OperatingSystem
+    $os = $script:CachedOS
 
     $memAvailMB = [math]::Round((Get-SafeCounterValue -Samples $samples -Pattern 'Available MBytes'), 2)
     $commitBytes = Get-SafeCounterValue -Samples $samples -Pattern 'Committed Bytes'
@@ -412,10 +423,6 @@ function Get-LiveData {
 
     $procs = Get-TopProcesses
     $suspicious = Get-SuspiciousBuckets -Processes $procs.all
-    $services = Get-ServiceSnapshot
-    $startup = Get-StartupItems
-    $pageFile = Get-PageFileSnapshot
-    $profiles = Get-PowerShellProfileInfo
     $browserGroup = Get-BrowserElectronGroup -Processes $procs.all
     $devGroup = Get-DevToolGroup -Processes $procs.all
     $secGroup = Get-SecurityGroup -Processes $procs.all
@@ -426,8 +433,11 @@ function Get-LiveData {
     $topPrivateWithCmd = foreach ($p in ($procs.by_private | Select-Object -First 20)) {
         $cmd = $null
         try {
-            $cmd = (Get-CimInstance Win32_Process -Filter "ProcessId = $($p.pid)" | Select-Object -ExpandProperty CommandLine)
-        } catch {}
+            $pid = [int]$p.pid
+            if ($pid -gt 0) {
+                $cmd = (Get-CimInstance Win32_Process -Filter "ProcessId = $pid" -Property CommandLine -ErrorAction SilentlyContinue | Select-Object -ExpandProperty CommandLine)
+            }
+        } catch { $script:ErrorCount++ }
         [PSCustomObject]@{
             name        = $p.name
             pid         = $p.pid
@@ -438,7 +448,7 @@ function Get-LiveData {
         }
     }
 
-    $gpuData = Get-GpuData
+    $gpuData = Get-GpuData -Samples $samples
     $insights = Get-InsightText -RamPct $ramPct -CommitPct $commitPct -PagesSec $pagesSec `
         -NonPagedMB (Convert-ToMB $nonPagedBytes) -DiskPct $diskPct -DiskQueue $diskQueue `
         -CpuPct $cpuPct -BrowserGroup $browserGroup -DevGroup $devGroup -SecGroup $secGroup `
@@ -510,6 +520,14 @@ function Write-Banner {
 
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://${HOSTNAME}:$Port/")
+$listener.TimeoutManager.RequestQueue = New-Object System.TimeSpan(0, 2, 0)
+
+$script:StartTime = Get-Date
+$script:CachedDrives = $null
+$script:CachedServices = $null
+$script:CachedStartup = $null
+$script:CachedOS = $null
+$script:CacheExpiry = [DateTime]::MinValue
 
 try {
     $listener.Start()
@@ -596,7 +614,7 @@ try {
             $response.OutputStream.Write($buffer, 0, $buffer.Length)
         }
 
-        $response.OutputStream.Close()
+        $response.Close()
     }
 } finally {
     $listener.Stop()
