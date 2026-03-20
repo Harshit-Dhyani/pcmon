@@ -71,14 +71,14 @@ jobs:
           cp pcmon.ps1 bin/ web/ package.json release/
           cd release
           bun init -y
-          rm index.ts README.mdLICENSE
+          rm index.ts README.md LICENSE
           tar -czvf ../pcmon-${VERSION}-bun.tar.gz .
           cd ..
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v1
         with:
-          files: pcmon-${VERSION}-bun.tar.gz
+          files: pcmon-${{ steps.version.outputs.VERSION }}-bun.tar.gz
 
   release-github:
     runs-on: ubuntu-latest

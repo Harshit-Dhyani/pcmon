@@ -1,16 +1,19 @@
 #!/bin/sh
 . "$(dirname "$0")/_/husky.sh"
 
-# Check for console.log
-if grep -r "console.log" --include="*.js" --include="*.ts" .; then
-  echo "Found console.log statements. Please remove before committing."
-  exit 1
-fi
+# Get staged JS/TS files
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(js|ts)$')
 
-# Check for debugger statements
-if grep -r "debugger" --include="*.js" --include="*.ts" .; then
-  echo "Found debugger statements. Please remove before committing."
-  exit 1
+if [ -n "$STAGED_FILES" ]; then
+  if echo "$STAGED_FILES" | xargs grep -l "console.log" 2>/dev/null; then
+    echo "Found console.log statements. Please remove before committing."
+    exit 1
+  fi
+
+  if echo "$STAGED_FILES" | xargs grep -l "debugger" 2>/dev/null; then
+    echo "Found debugger statements. Please remove before committing."
+    exit 1
+  fi
 fi
 
 echo "Pre-commit checks passed!"
