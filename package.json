@@ -2,6 +2,10 @@
   "name": "pcmon",
   "version": "1.0.0",
   "description": "Local-first Windows system monitoring and diagnostics tool",
+  "main": "pcmon.ps1",
+  "bin": {
+    "pcmon": "./bin/pcmon.ps1"
+  },
   "scripts": {
     "prepare": "husky install",
     "sync:skills": "bun run scripts/sync-skills.ts"
@@ -15,5 +19,7 @@
     "copyfiles": "^2.4.1",
     "husky": "^9.0.0",
     "semantic-release": "^24.0.0"
-  }
+  },
+  "keywords": ["monitoring", "diagnostics", "windows", "system"],
+  "license": "MIT"
 }

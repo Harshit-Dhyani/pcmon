@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PCMON - System Monitor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: rgba(15, 15, 25, 0.9);
+            --bg-card: rgba(20, 20, 35, 0.85);
+            --text-primary: #ffffff;
+            --text-secondary: #8892a4;
+            --accent: #00ff88;
+            --accent-glow: rgba(0, 255, 136, 0.4);
+            --warn: #ffcc00;
+            --warn-glow: rgba(255, 204, 0, 0.4);
+            --danger: #ff4757;
+            --danger-glow: rgba(255, 71, 87, 0.4);
+            --border: rgba(255, 255, 255, 0.08);
+            --font-mono: 'Consolas', 'Monaco', monospace;
+        }
+
+        body {
+            width: 100vw;
+            height: 100vh;
+            background: var(--bg-primary);
+            font-family: 'Segoe UI', -apple-system, sans-serif;
+            color: var(--text-primary);
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Animated background grid */
+        .bg-grid {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image: 
+                linear-gradient(rgba(0, 255, 136, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 255, 136, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+            pointer-events: none;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            grid-template-rows: auto 1fr auto;
+            gap: 12px;
+            padding: 20px;
+            height: 100vh;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Header */
+        .header {
+            grid-column: 1 / -1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 20px;
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--accent);
+            text-shadow: 0 0 20px var(--accent-glow);
+            letter-spacing: 2px;
+        }
+
+        .header-info {
+            display: flex;
+            gap: 20px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        /* Metric Cards */
+        .metric-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .metric-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--accent);
+            opacity: 0.8;
+        }
+
+        .metric-card.warning::before { background: var(--warn); }
+        .metric-card.danger::before { background: var(--danger); }
+
+        .metric-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .metric-value {
+            font-size: 32px;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            color: var(--accent);
+            text-shadow: 0 0 20px var(--accent-glow);
+        }
+
+        .metric-card.warning .metric-value { color: var(--warn); text-shadow: 0 0 20px var(--warn-glow); }
+        .metric-card.danger .metric-value { color: var(--danger); text-shadow: 0 0 20px var(--danger-glow); }
+
+        .metric-bar {
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+            margin-top: 12px;
+            overflow: hidden;
+        }
+
+        .metric-bar-fill {
+            height: 100%;
+            background: var(--accent);
+            border-radius: 2px;
+            transition: width 0.5s ease;
+            box-shadow: 0 0 10px var(--accent-glow);
+        }
+
+        .metric-card.warning .metric-bar-fill { background: var(--warn); box-shadow: 0 0 10px var(--warn-glow); }
+        .metric-card.danger .metric-bar-fill { background: var(--danger); box-shadow: 0 0 10px var(--danger-glow); }
+
+        .metric-detail {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-top: 8px;
+        }
+
+        /* Processes Panel */
+        .processes-panel {
+            grid-column: 1 / -1;
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            padding: 16px;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+
+        .process-column h4 {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-secondary);
+            margin-bottom: 10px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .process-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 0;
+            font-size: 12px;
+            font-family: var(--font-mono);
+        }
+
+        .process-name {
+            color: var(--text-primary);
+            max-width: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .process-value {
+            color: var(--accent);
+            font-size: 11px;
+        }
+
+        /* Footer */
+        .footer {
+            grid-column: 1 / -1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 20px;
+            font-size: 10px;
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--accent);
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 6px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* GPU Section */
+        .gpu-section {
+            grid-column: 1 / -1;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+        }
+
+        .gpu-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            padding: 14px;
+        }
+
+        .gpu-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+
+        .gpu-engines {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .gpu-engine {
+            background: rgba(0, 255, 136, 0.1);
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .gpu-engine-label {
+            color: var(--text-secondary);
+            font-size: 8px;
+            text-transform: uppercase;
+        }
+
+        .gpu-engine-value {
+            color: var(--accent);
+            font-family: var(--font-mono);
+            font-weight: 600;
+        }
+
+        /* Scanline effect */
+        .scanlines {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: repeating-linear-gradient(
+                0deg,
+                rgba(0, 0, 0, 0.1) 0px,
+                rgba(0, 0, 0, 0.1) 1px,
+                transparent 1px,
+                transparent 2px
+            );
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        /* Loading state */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            font-size: 14px;
+            color: var(--accent);
+        }
+
+        .loading::after {
+            content: '';
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            margin-left: 10px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Themes */
+        body.theme-matrix {
+            --accent: #00ff00;
+            --accent-glow: rgba(0, 255, 0, 0.4);
+            --bg-primary: #000800;
+        }
+
+        body.theme-cyberpunk {
+            --accent: #ff00ff;
+            --accent-glow: rgba(255, 0, 255, 0.4);
+            --warn: #00ffff;
+            --warn-glow: rgba(0, 255, 255, 0.4);
+            --bg-primary: #0d0015;
+        }
+
+        body.theme-light {
+            --bg-primary: #f0f2f5;
+            --bg-secondary: rgba(255, 255, 255, 0.95);
+            --bg-card: rgba(255, 255, 255, 0.9);
+            --text-primary: #1a1a2e;
+            --text-secondary: #666;
+            --accent: #0066ff;
+            --accent-glow: rgba(0, 102, 255, 0.3);
+            --border: rgba(0, 0, 0, 0.1);
+        }
+
+        body.theme-minimal {
+            --bg-primary: transparent;
+            --bg-secondary: transparent;
+            --bg-card: transparent;
+            --border: transparent;
+        }
+    </style>
+</head>
+<body class="loading">
+    <div class="bg-grid"></div>
+    <div class="scanlines"></div>
+
+    <div class="container" id="app" style="display: none;">
+        <!-- Header -->
+        <div class="header">
+            <div class="logo">PCMON</div>
+            <div class="header-info">
+                <span id="hostname"></span>
+                <span id="timestamp"></span>
+            </div>
+        </div>
+
+        <!-- CPU -->
+        <div class="metric-card" id="cpu-card">
+            <div class="metric-label">CPU Usage</div>
+            <div class="metric-value" id="cpu-value">0%</div>
+            <div class="metric-bar"><div class="metric-bar-fill" id="cpu-bar" style="width: 0%"></div></div>
+            <div class="metric-detail" id="cpu-detail">Queue: 0</div>
+        </div>
+
+        <!-- RAM -->
+        <div class="metric-card" id="ram-card">
+            <div class="metric-label">RAM Usage</div>
+            <div class="metric-value" id="ram-value">0%</div>
+            <div class="metric-bar"><div class="metric-bar-fill" id="ram-bar" style="width: 0%"></div></div>
+            <div class="metric-detail" id="ram-detail">0 / 0 GB</div>
+        </div>
+
+        <!-- Commit -->
+        <div class="metric-card" id="commit-card">
+            <div class="metric-label">Commit</div>
+            <div class="metric-value" id="commit-value">0%</div>
+            <div class="metric-bar"><div class="metric-bar-fill" id="commit-bar" style="width: 0%"></div></div>
+            <div class="metric-detail" id="commit-detail">0 / 0 GB</div>
+        </div>
+
+        <!-- Disk -->
+        <div class="metric-card" id="disk-card">
+            <div class="metric-label">Disk Activity</div>
+            <div class="metric-value" id="disk-value">0%</div>
+            <div class="metric-bar"><div class="metric-bar-fill" id="disk-bar" style="width: 0%"></div></div>
+            <div class="metric-detail" id="disk-detail">Queue: 0</div>
+        </div>
+
+        <!-- GPU Section -->
+        <div class="gpu-section" id="gpu-section" style="display: none;">
+            <div class="gpu-card">
+                <div class="gpu-name" id="gpu-name">GPU</div>
+                <div class="gpu-engines" id="gpu-engines"></div>
+            </div>
+        </div>
+
+        <!-- Processes -->
+        <div class="processes-panel">
+            <div class="process-column">
+                <h4>Top by RAM</h4>
+                <div id="proc-ram"></div>
+            </div>
+            <div class="process-column">
+                <h4>Top by CPU</h4>
+                <div id="proc-cpu"></div>
+            </div>
+            <div class="process-column">
+                <h4>Top by Private</h4>
+                <div id="proc-private"></div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <div><span class="status-dot"></span><span id="status">Connecting...</span></div>
+            <div>Processes: <span id="proc-count">0</span></div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const CONFIG = {
+            apiUrl: window.wallpaperApiUrl || 'http://localhost:9876/data',
+            refreshRate: 2000,
+            theme: 'dark',
+            showGPU: true,
+            showProcesses: true
+        };
+
+        // Wallpaper Engine API support
+        if (window.wallpaperRegisterPropertyListener) {
+            window.wallpaperRegisterPropertyListener('refreshRate', (val) => {
+                CONFIG.refreshRate = val;
+            });
+            window.wallpaperRegisterPropertyListener('theme', (val) => {
+                setTheme(val);
+            });
+        }
+
+        function setTheme(theme) {
+            document.body.className = theme === 'light' ? 'theme-light' : 
+                                     theme === 'matrix' ? 'theme-matrix' :
+                                     theme === 'cyberpunk' ? 'theme-cyberpunk' :
+                                     theme === 'minimal' ? 'theme-minimal' : '';
+        }
+
+        function getStatusClass(value, warnThreshold = 60, dangerThreshold = 80) {
+            if (value >= dangerThreshold) return 'danger';
+            if (value >= warnThreshold) return 'warning';
+            return '';
+        }
+
+        function formatBytes(mb) {
+            if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB';
+            return Math.round(mb) + ' MB';
+        }
+
+        function renderData(data) {
+            document.getElementById('app').style.display = 'grid';
+            document.body.classList.remove('loading');
+
+            // Header
+            document.getElementById('hostname').textContent = data.hostname || 'Unknown';
+            document.getElementById('timestamp').textContent = data.ts || '';
+            document.getElementById('proc-count').textContent = data.total_procs || 0;
+            document.getElementById('status').textContent = 'Live';
+
+            // CPU
+            const cpu = Math.round(data.cpu_pct || 0);
+            document.getElementById('cpu-value').textContent = cpu + '%';
+            document.getElementById('cpu-bar').style.width = cpu + '%';
+            document.getElementById('cpu-detail').textContent = 'Queue: ' + (data.cpu_queue || 0);
+            document.getElementById('cpu-card').className = 'metric-card ' + getStatusClass(cpu);
+
+            // RAM
+            const ram = Math.round(data.ram_pct || 0);
+            document.getElementById('ram-value').textContent = ram + '%';
+            document.getElementById('ram-bar').style.width = ram + '%';
+            document.getElementById('ram-detail').textContent = 
+                formatBytes((data.ram_used_gb || 0) * 1024) + ' / ' + formatBytes((data.ram_total_gb || 0) * 1024);
+            document.getElementById('ram-card').className = 'metric-card ' + getStatusClass(ram);
+
+            // Commit
+            const commit = Math.round(data.commit_pct || 0);
+            document.getElementById('commit-value').textContent = commit + '%';
+            document.getElementById('commit-bar').style.width = commit + '%';
+            document.getElementById('commit-detail').textContent = 
+                formatBytes((data.commit_gb || 0) * 1024) + ' / ' + formatBytes((data.limit_gb || 0) * 1024);
+            document.getElementById('commit-card').className = 'metric-card ' + getStatusClass(commit, 70, 85);
+
+            // Disk
+            const disk = Math.round(data.disk_pct || 0);
+            document.getElementById('disk-value').textContent = disk + '%';
+            document.getElementById('disk-bar').style.width = disk + '%';
+            document.getElementById('disk-detail').textContent = 'Queue: ' + (data.disk_queue || 0);
+            document.getElementById('disk-card').className = 'metric-card ' + getStatusClass(disk, 70, 90);
+
+            // GPU
+            if (CONFIG.showGPU && data.gpu && data.gpu.available) {
+                document.getElementById('gpu-section').style.display = 'grid';
+                document.getElementById('gpu-name').textContent = data.gpu.adapters?.[0]?.name || 'GPU';
+                
+                const engines = data.gpu.eng_type_totals || {};
+                const gpuEngines = document.getElementById('gpu-engines');
+                gpuEngines.innerHTML = Object.entries(engines)
+                    .filter(([_, v]) => v > 0)
+                    .map(([name, value]) => `
+                        <div class="gpu-engine ${getStatusClass(value)}">
+                            <span class="gpu-engine-label">${escapeHtml(name)}</span>
+                            <span class="gpu-engine-value">${Math.round(value)}%</span>
+                        </div>
+                    `).join('');
+            } else {
+                document.getElementById('gpu-section').style.display = 'none';
+            }
+
+            // Processes
+            if (CONFIG.showProcesses) {
+                const renderProc = (id, procs) => {
+                    const el = document.getElementById(id);
+                    el.innerHTML = (procs || []).slice(0, 6).map(p => `
+                        <div class="process-item">
+                            <span class="process-name">${escapeHtml(p.name || '?')}</span>
+                            <span class="process-value">${formatBytes(p.ws_mb * 1024)}</span>
+                        </div>
+                    `).join('');
+                };
+                renderProc('proc-ram', data.top_ram);
+                renderProc('proc-cpu', data.top_cpu);
+                renderProc('proc-private', data.top_private);
+            }
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/[&<>"']/g, (m) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+        }
+
+        // Error tracking
+        const ERRORS = [];
+        const MAX_ERRORS = 50;
+
+        function logError(msg, details = '') {
+            const entry = { ts: Date.now(), msg, details: String(details) };
+            ERRORS.push(entry);
+            if (ERRORS.length > MAX_ERRORS) ERRORS.shift();
+            console.error('[PCMON]', msg, details);
+        }
+
+        // Capture all errors
+        window.onerror = (msg, src, line, col, err) => {
+            logError(`JS Error: ${msg}`, `at ${src}:${line}:${col}`);
+            return false;
+        };
+
+        window.onunhandledrejection = (e) => {
+            logError('Unhandled Promise', e.reason);
+        };
+
+        async function fetchData() {
+            try {
+                const res = await fetch(CONFIG.apiUrl);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+                renderData(data);
+            } catch (e) {
+                logError('Fetch failed', e.message);
+                document.getElementById('status').textContent = 'Error: ' + e.message;
+            }
+        }
+
+        // Expose for debugging
+        window.pcmonDebug = { errors: ERRORS, config: CONFIG, fetch: fetchData };
+
+        // Initialize
+        fetchData();
+        setInterval(fetchData, CONFIG.refreshRate);
+
+        // Handle visibility
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                // Pause when not visible
+            } else {
+                fetchData();
+            }
+        });
+    </script>
+</body>
+</html>

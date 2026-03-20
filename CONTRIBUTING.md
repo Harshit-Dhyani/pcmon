@@ -2,53 +2,72 @@
 
 Thank you for your interest in contributing to pcmon!
 
-## Ways to Contribute
+## Development Philosophy
 
-- **Report bugs** - Open an issue with reproduction steps
-- **Suggest features** - Open an issue with your proposal
-- **Improve docs** - Submit PRs for README or documentation
-- **Submit code** - Fix bugs or add features
+pcmon is a **local-first Windows diagnostics tool** with these principles:
+
+- **PowerShell-first** - Core logic in PowerShell
+- **Plain frontend** - HTML/CSS/JS without frameworks
+- **Local-only** - No cloud, no external services
+- **Diagnostic-focused** - Metrics with actionable insights
 
 ## Getting Started
 
-1. Fork the repository
-2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/pcmon.git`
-3. Create a branch: `git checkout -b feature/your-feature-name`
-4. Make your changes
-5. Test locally: `.\pcmon.ps1`
-6. Submit a pull request
+1. Clone the repository
+2. Run `.\pcmon.ps1` to test
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
 
-## Development
+## Code Structure
 
-### Running Locally
-
-```powershell
-.\pcmon.ps1
+```
+pcmon/
+  pcmon.ps1          # Main entry - data collection, HTTP server
+  web/
+    index.html       # Dashboard HTML
+    dashboard.js    # Dashboard JavaScript
+    dashboard.css   # Dashboard styles
 ```
 
-### Testing Changes
+## Adding Features
 
+### Process Actions
+- Add API route in pcmon.ps1 HTTP handler
+- Add JS handler in dashboard.js
+- Add button in index.html
+- Test with protected processes
+
+### Insights
+- Modify insight generation in Get-LiveData function
+- Keep explanations actionable
+
+### Dashboard UI
+- Add tab in index.html with `data-page` attribute
+- Add page section with `id="pg-{name}"`
+- Add rendering logic in dashboard.js
+
+## Testing
+
+Test your changes:
 ```powershell
-# API-only mode (no browser)
 .\pcmon.ps1 -NoOpen
-
-# Custom port
-.\pcmon.ps1 -Port 8080
+# Then visit http://localhost:9876
 ```
 
-### Code Style
+Test specific features:
+- Process actions - try killing a notepad process
+- Snapshots - save and compare
+- Config - change thresholds in Settings tab
 
-- PowerShell: Follows standard conventions
-- JavaScript: ES6+ syntax
-- CSS: BEM naming convention
+## Guidelines
 
-## Scripts
+- Keep changes minimal and focused
+- Preserve existing behavior
+- Add XSS protection for user data
+- Validate all inputs
+- Don't expose internal errors to users
 
-```bash
-# Sync skills to .kilo
-bun run sync:skills
-```
+## Questions
 
-## License
-
-By contributing, you agree that your contributions will be licensed under the MIT License.
+Open an issue for questions about contributing.

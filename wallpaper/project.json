@@ -1,0 +1,69 @@
+{
+  "name": "pcmon",
+  "title": "PCMON System Monitor",
+  "type": "website",
+  "source": "index.html",
+  "readme": "README.md",
+  "version": "1.0.0",
+  "author": "pcmon",
+  "description": "Real-time Windows system monitoring wallpaper with CPU, RAM, GPU, Disk, and Network metrics",
+  "tags": [
+    "system monitor",
+    "windows",
+    "hardware monitor",
+    "cpu",
+    "ram",
+    "gpu"
+  ],
+  "services": {
+    "pcmon_api": {
+      "enable": true,
+      "url": "http://localhost:9876/data",
+      "refreshRate": 2000
+    }
+  },
+  "properties": {
+    "schemaVersion": 2,
+    "styles": {
+      "backgroundColor": "#0a0a0f",
+      "fontFamily": "Segoe UI, Arial, sans-serif"
+    },
+    "settings": [
+      {
+        "name": "refreshRate",
+        "type": "slider",
+        "displayName": "Refresh Rate (ms)",
+        "min": 1000,
+        "max": 10000,
+        "step": 500,
+        "default": 2000
+      },
+      {
+        "name": "showGPU",
+        "type": "checkbox",
+        "displayName": "Show GPU Stats",
+        "default": true
+      },
+      {
+        "name": "showProcesses",
+        "type": "checkbox",
+        "displayName": "Show Top Processes",
+        "default": true
+      },
+      {
+        "name": "theme",
+        "type": "dropdown",
+        "displayName": "Theme",
+        "options": ["dark", "light", "matrix", "cyberpunk", "minimal"],
+        "default": "dark"
+      }
+    ]
+  },
+  "filePanes": [
+    {
+      "file": "index.html",
+      "type": "html",
+      "title": "System Monitor"
+    }
+  ]
+}

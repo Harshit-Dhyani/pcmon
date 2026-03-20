@@ -18,11 +18,18 @@
     <div class="host-badge" id="hdr-host">—</div>
   </div>
   <div class="hdr-right">
+    <div class="route-links">
+      <a href="/data" target="_blank" title="/data">data</a>
+      <a href="/health" target="_blank" title="/health">health</a>
+      <a href="/errors" target="_blank" title="/errors">errors</a>
+      <a href="/debug" target="_blank" title="/debug">debug</a>
+      <a href="/logs" target="_blank" title="/logs">logs</a>
+    </div>
     <span class="rf-lbl">Refresh</span>
     <select class="rf-sel" id="rf-sel">
-      <option value="2000" selected>2 s</option>
+      <option value="5000" selected>5 s</option>
+      <option value="2000">2 s</option>
       <option value="1000">1 s</option>
-      <option value="5000">5 s</option>
       <option value="10000">10 s</option>
     </select>
     <div class="ts" id="ts">--:--:--</div>
@@ -41,6 +48,9 @@
   <div class="ntab" data-page="services">Services</div>
   <div class="ntab" data-page="system">System</div>
   <div class="ntab" data-page="procs">All Processes</div>
+  <div class="ntab" data-page="snapshots">Snapshots</div>
+  <div class="ntab" data-page="debug">Debug</div>
+  <div class="ntab" data-page="settings">⚙ Settings</div>
 </nav>
 
 <!-- ── Alerts ─────────────────────────────────────────────────────── -->
@@ -66,7 +76,7 @@
         </div>
         <div class="sk sk-val"></div>
         <div class="sk sk-sub"></div>
-        <div class="sval" id="sv-ram">—</div>
+        <div class="sval" id="sv-ram">—<span class="strend" id="sv-ram-trend"></span></div>
         <div class="ssub" id="ss-ram">—</div>
         <div class="strack"><div class="sfill" id="sf-ram"></div></div>
         <div class="sk sk-spark"></div>
@@ -81,7 +91,7 @@
         </div>
         <div class="sk sk-val"></div>
         <div class="sk sk-sub"></div>
-        <div class="sval" id="sv-cpu">—</div>
+        <div class="sval" id="sv-cpu">—<span class="strend" id="sv-cpu-trend"></span></div>
         <div class="ssub">All logical cores</div>
         <div class="strack"><div class="sfill" id="sf-cpu"></div></div>
         <div class="sk sk-spark"></div>
@@ -96,7 +106,7 @@
         </div>
         <div class="sk sk-val"></div>
         <div class="sk sk-sub"></div>
-        <div class="sval" id="sv-disk">—</div>
+        <div class="sval" id="sv-disk">—<span class="strend" id="sv-disk-trend"></span></div>
         <div class="ssub" id="ss-disk">—</div>
         <div class="strack"><div class="sfill" id="sf-disk"></div></div>
         <div class="sk sk-spark"></div>
@@ -111,7 +121,7 @@
         </div>
         <div class="sk sk-val"></div>
         <div class="sk sk-sub"></div>
-        <div class="sval" id="sv-cm">—</div>
+        <div class="sval" id="sv-cm">—<span class="strend" id="sv-cm-trend"></span></div>
         <div class="ssub" id="ss-cm">—</div>
         <div class="strack"><div class="sfill" id="sf-cm"></div></div>
         <div class="sk sk-spark"></div>
@@ -128,6 +138,7 @@
           <span class="pnl-badge" id="ov-pc">
             <span class="sk sk-badge" style="display:inline-block;width:70px;height:16px"></span>
           </span>
+          <button class="btn-sm" onclick="copyTableToClipboard('ov-tbl')">Copy</button>
         </div>
         <div class="tbl-scroll" id="ov-tbl-wrap">
           <!-- Skeleton rows -->
@@ -210,6 +221,7 @@
       <div class="pnl-head">
         <span class="pnl-title">Top 30 by Private Memory</span>
         <input class="sbar" id="s-ram" placeholder="Filter processes…">
+        <button class="btn-sm" onclick="copyTableToClipboard('r-tbl')">Copy</button>
       </div>
       <div class="tbl-scroll">
         <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="r-tbl-sk">
@@ -247,7 +259,7 @@
     </div>
 
     <div class="pnl">
-      <div class="pnl-head"><span class="pnl-title">Top 20 by CPU Time</span></div>
+      <div class="pnl-head"><span class="pnl-title">Top 20 by CPU Time</span><button class="btn-sm" onclick="copyTableToClipboard('c-tbl')">Copy</button></div>
       <div class="tbl-scroll">
         <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="c-tbl-sk">
           <div class="sk sk-row"></div><div class="sk sk-row"></div>
@@ -356,6 +368,7 @@
       <div class="pnl-head">
         <span class="pnl-title">Suspicious / Dev / Browser / Security</span>
         <span class="pnl-badge" id="sus-count">0</span>
+        <button class="btn-sm" onclick="copyTableToClipboard('sus-tbl')">Copy</button>
       </div>
       <div class="tbl-scroll">
         <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="sus-tbl-sk">
@@ -425,6 +438,7 @@
     <div class="sec-head" style="margin-bottom:14px">
       <input class="sbar" id="s-all" placeholder="Filter by name…" style="width:260px">
       <span class="pnl-badge" id="all-pc">—</span>
+      <button class="btn-sm" onclick="copyTableToClipboard('all-tbl')">Copy</button>
     </div>
     <div class="pnl">
       <div class="tbl-scroll" style="max-height:600px">
@@ -436,6 +450,128 @@
         </div>
         <table id="all-tbl" style="display:none"></table>
       </div>
+    </div>
+  </div>
+
+  <!-- ── SNAPSHOTS ─────────────────────────────────────────────────── -->
+  <div id="pg-snapshots" class="pg">
+    <div class="snap-controls">
+      <input class="sbar" id="snap-label" placeholder="Optional label (e.g., 'Before restart')" style="width:280px">
+      <button class="btn btn-primary" id="btn-save-snap">Save Snapshot</button>
+      <span class="snap-msg" id="snap-msg"></span>
+      <button class="btn" id="btn-gen-report" style="margin-left: 10px;">Generate Report</button>
+      <button class="btn" id="btn-dl-report" style="margin-left: 5px;">Download Report</button>
+    </div>
+    <div class="snap-grid">
+      <div class="pnl">
+        <div class="pnl-head"><span class="pnl-title">Saved Snapshots</span></div>
+        <div class="tbl-scroll" style="max-height:400px">
+          <table id="snapshots-tbl"></table>
+        </div>
+      </div>
+      <div class="pnl">
+        <div class="pnl-head"><span class="pnl-title">Comparison Result</span></div>
+        <div class="pnl-body" id="compare-result">
+          <div class="note">Select a snapshot and click "Compare" to see changes.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DEBUG ────────────────────────────────────────────────────── -->
+  <div id="pg-debug" class="pg">
+    <div class="strip" style="margin-bottom:16px">
+      <div class="scard" id="dbg-sc-fetch">
+        <div class="scard-top"><span class="scard-lbl">Fetch /data</span></div>
+        <div class="sval" id="dbg-fetch">—</div>
+        <div class="ssub">Last fetch time (ms)</div>
+      </div>
+      <div class="scard" id="dbg-sc-render">
+        <div class="scard-top"><span class="scard-lbl">Render</span></div>
+        <div class="sval" id="dbg-render">—</div>
+        <div class="ssub">DOM render time (ms)</div>
+      </div>
+      <div class="scard" id="dbg-sc-cycle">
+        <div class="scard-top"><span class="scard-lbl">Cycle</span></div>
+        <div class="sval" id="dbg-cycle">—</div>
+        <div class="ssub">Total refresh cycle (ms)</div>
+      </div>
+      <div class="scard" id="dbg-sc-fps">
+        <div class="scard-top"><span class="scard-lbl">FPS</span></div>
+        <div class="sval" id="dbg-fps">—</div>
+        <div class="ssub">Frames per second</div>
+      </div>
+    </div>
+
+    <div class="grid2" style="margin-bottom:16px">
+      <div class="pnl">
+        <div class="pnl-head">Browser Memory</div>
+        <div class="pnl-body" id="dbg-mem">
+          <div class="sk sk-row"></div>
+          <div class="sk sk-row" style="margin-top:6px"></div>
+        </div>
+      </div>
+      <div class="pnl">
+        <div class="pnl-head">Performance Timeline</div>
+        <div class="pnl-body" id="dbg-timeline" style="font-family:monospace;font-size:11px">
+          <div class="sk sk-row"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid2" style="margin-bottom:16px">
+      <div class="pnl">
+        <div class="pnl-head">System Metrics (from pcmon)</div>
+        <div class="pnl-body" id="dbg-sys-metrics">
+          <div class="sk sk-row"></div>
+        </div>
+      </div>
+      <div class="pnl">
+        <div class="pnl-head">Cache Status</div>
+        <div class="pnl-body" id="dbg-cache">
+          <div class="sk sk-row"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid2" style="margin-bottom:16px">
+      <div class="pnl">
+        <div class="pnl-head">JavaScript Errors <span id="js-err-count" style="color:var(--text-dim)">0</span></div>
+        <div class="tbl-scroll" style="max-height:300px">
+          <div id="js-errors" style="padding:12px;font-family:monospace;font-size:12px">
+            <div class="note">No errors detected</div>
+          </div>
+        </div>
+      </div>
+      <div class="pnl">
+        <div class="pnl-head">PowerShell Errors</div>
+        <div id="ps-errors"></div>
+        <div class="pnl-body" id="dbg-ps-errs">
+          <div class="note">No PowerShell errors</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pnl">
+      <div class="pnl-head">Quick Links</div>
+      <div style="padding:12px;font-family:monospace;font-size:11px">
+        <div style="margin:4px 0"><a href="/errors" target="_blank" style="color:var(--accent)">/errors</a> — PowerShell errors & system info</div>
+        <div style="margin:4px 0"><a href="/logs" target="_blank" style="color:var(--accent)">/logs</a> — Raw error log</div>
+        <div style="margin:4px 0"><a href="/debug" target="_blank" style="color:var(--accent)">/debug</a> — Backend cache state</div>
+        <div style="margin:4px 0"><a href="/health" target="_blank" style="color:var(--accent)">/health</a> — Server status</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SETTINGS ─────────────────────────────────────────────────────── -->
+  <div id="pg-settings" class="pg">
+    <div class="pnl">
+      <div class="pnl-head"><span class="pnl-title">Alert Thresholds</span></div>
+      <div class="pnl-body" id="thresholds-form">
+        <!-- threshold inputs rendered by JS -->
+      </div>
+      <button id="btn-save-thresholds" class="btn-primary" style="margin-top:10px">Save Thresholds</button>
+      <span id="thresholds-msg" style="margin-left:10px"></span>
     </div>
   </div>
 
