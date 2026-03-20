@@ -1,0 +1,27 @@
+name: 'Lock resolved issues'
+
+on:
+  issues:
+    types: [completed]
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: dessant/lock-threads@v5
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          issue-lock-comment: 'This issue has been resolved and is now locked. If you have further questions, please open a new issue.'
+          pr-lock-comment: 'This PR has been merged and is now locked. If you have further questions, please open a new PR.'
+          lock-reason: 'resolved'
+          exclude-issue-created-before: ''
+          exclude-issue-created-after: ''
+          exclude-issue-created-between: ''
+          exclude-pr-created-before: ''
+          exclude-pr-created-after: ''
+          exclude-pr-created-between: ''
+          only-issue-queries: ''
+          only-pr-queries: ''
+          include-any-labels: ''
+          exempt-any-labels: ''
+          skip-closed-issues-not-included: false

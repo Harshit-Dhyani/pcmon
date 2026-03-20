@@ -1,0 +1,31 @@
+name: Discussions
+
+on:
+  discussions:
+    types: [created, edited, answered, unanswered]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  discussion-answer:
+    if: github.event.discussion.category.name == 'Q&A'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark as answered
+        if: github.event.discussion.answer == null
+        run: |
+          gh api graphql -f query="
+            mutation {
+              discussion: markDiscussionAsAnswered(
+                discussionId: '${{ github.event.discussion.node_id }}'
+              ) {
+                discussion {
+                  url
+                }
+              }
+            }
+          "
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
