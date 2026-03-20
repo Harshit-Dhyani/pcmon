@@ -1,6 +1,10 @@
 {
+  "name": "pcmon",
+  "version": "1.0.0",
+  "description": "Local-first Windows system monitoring and diagnostics tool",
   "scripts": {
-    "prepare": "husky install"
+    "prepare": "husky install",
+    "sync:skills": "bun run scripts/sync-skills.ts"
   },
   "devDependencies": {
     "@semantic-release/commit-analyzer": "^13.0.0",
