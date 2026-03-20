@@ -1,0 +1,36 @@
+{
+  "name": "pcmon",
+  "version": "1.0.0",
+  "description": "Local-first Windows system monitoring and diagnostics tool",
+  "keywords": [
+    "windows",
+    "monitoring",
+    "system-monitor",
+    "diagnostics",
+    "powershell",
+    "performance"
+  ],
+  "homepage": "https://github.com/Harshit-Dhyani/pcmon#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Harshit-Dhyani/pcmon.git"
+  },
+  "license": "MIT",
+  "scripts": {
+    "sync:skills": "bun run scripts/sync-skills.ts"
+  },
+  "devDependencies": {
+    "copyfiles": "^2.4.1"
+  },
+  "files": [
+    "pcmon.ps1",
+    "bin/",
+    "web/"
+  ],
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org"
+  },
+  "bin": {
+    "pcmon": "./bin/pcmon.ps1"
+  }
+}
