@@ -25,3 +25,7 @@ build/
 
 # GitHub Wiki (managed separately)
 .github/wiki/
+
+# User data (local only)
+.codex/
+snapshots/

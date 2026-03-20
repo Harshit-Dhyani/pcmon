@@ -2,7 +2,7 @@
 
 Local-first Windows system monitoring and diagnostics tool.
 
-## Quick start
+## Quick Start
 
 ```powershell
 .\pcmon.ps1
@@ -17,92 +17,120 @@ pwsh -File .\pcmon.ps1
 ## Usage
 
 ```powershell
-.\pcmon.ps1             # defaults: opens browser, 2s refresh
+.\pcmon.ps1              # defaults: opens browser, 2s refresh
 .\pcmon.ps1 -NoOpen      # API-only mode, no browser auto-open
 .\pcmon.ps1 -ApiOnly     # same as -NoOpen
 .\pcmon.ps1 -Port 8080   # custom port
+.\pcmon.ps1 -Tray        # system tray mode (runs in background)
+.\pcmon.ps1 -Wallpaper   # live wallpaper mode
 .\pcmon.ps1 -Help        # show all options
+```
+
+## Features
+
+### Dashboard Tabs
+- **Overview** — RAM, commit, CPU, disk at a glance with sparklines
+- **RAM** — paged/non-paged pool, private memory breakdown
+- **CPU** — CPU utilization, queue, paging activity
+- **Disk** — disk activity, drives with usage bars
+- **GPU** — adapter info, utilization, memory (if available)
+- **Groups** — Browser/Electron, Dev Tools, Security tools memory
+- **Suspicious** — high-resource processes detection
+- **Services** — heavy services and startup items
+- **System** — drives, page file, PowerShell profiles
+- **All Processes** — full process list with filtering
+- **Settings** — configurable alert thresholds
+
+### Process Actions
+- **Kill** — terminate a process (with confirmation)
+- **Suspend** — pause a process
+- **Resume** — resume a suspended process
+
+Protected system processes cannot be terminated.
+
+### Snapshots
+- Save labeled snapshots of system state
+- Compare snapshots to see what changed
+- Export to JSON or CSV
+
+### Reports
+- Generate printable HTML reports
+- Save as PDF via browser print dialog
+
+### Insights
+Real-time diagnostic insights:
+- High RAM vs commit pressure distinction
+- Paging / disk thrashing detection
+- Non-paged pool (driver leak detection)
+- Browser/Electron/Dev tool overhead
+- Disk bottlenecks
+
+### Alert Thresholds
+Customizable thresholds for:
+- RAM usage %
+- CPU usage %
+- Commit charge %
+- Pages/sec
+- Non-paged pool MB
+- Disk usage %
+
+## API Routes
+
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/` | GET | Dashboard HTML |
+| `/data` | GET | Live system data JSON |
+| `/dashboard.js` | GET | JavaScript |
+| `/dashboard.css` | GET | Styles |
+| `/api/process/{pid}/kill` | POST | Kill process |
+| `/api/process/{pid}/suspend` | POST | Suspend process |
+| `/api/process/{pid}/resume` | POST | Resume process |
+| `/api/snapshots` | GET/POST | List/save snapshots |
+| `/api/snapshots/{id}/compare` | POST | Compare snapshot |
+| `/api/snapshots/{id}/export` | GET | Export JSON |
+| `/api/snapshots/{id}/export.csv` | GET | Export CSV |
+| `/api/config` | GET/POST | Alert thresholds |
+| `/api/report` | GET | Printable report |
+| `/api/report/download` | GET | Download report |
+| `/wallpaper` | GET | Live wallpaper |
+
+## File Layout
+
+```
+pcmon/
+  pcmon.ps1          # main entry point
+  config.json        # saved alert thresholds (created on first use)
+  snapshots/         # saved snapshots (created on first use)
+  bin/
+    pcmon.ps1       # CLI wrapper shim
+  web/
+    index.html      # dashboard
+    dashboard.js    # UI logic
+    dashboard.css   # styles
 ```
 
 ## Requirements
 
 - Windows with PowerShell 5.1+ or PowerShell Core (pwsh)
-- Performance counters require admin privileges for full accuracy
 - Web browser for the dashboard
+- Admin privileges for full accuracy (optional)
 
-## File layout
+## Design Principles
 
-```
-pcmon/           -- root
-  pcmon.ps1      -- main entry point; HTTP server + data collection
-  web/
-    index.html   -- dashboard HTML (served from disk)
-    dashboard.js -- dashboard UI logic (served from disk)
-    dashboard.css -- dashboard styles (served from disk)
-  bin/
-    pcmon.ps1    -- CLI wrapper shim for future package-manager install
-  scripts/
-    sync-skills.ts -- skill sync script for .kilo compatibility
-```
+- **Local-first**: all data stays on your machine
+- **Diagnostic-focused**: raw metrics with actionable interpretation
+- **PowerShell-first**: native Windows access without external dependencies
+- **Lightweight**: plain HTML/CSS/JS, no React
+- **One core, multiple entry modes**: direct PS1, CLI package, optional desktop shell
 
-## Modes
+## Security
 
-### Direct PowerShell
+- Process actions require confirmation
+- Protected system processes cannot be terminated
+- Input validation on all API endpoints
+- No shell-string execution
+- XSS protection in dashboard
 
-Run the script directly. This is the primary supported mode.
+## License
 
-```powershell
-.\pcmon.ps1
-```
-
-### API-only (no browser)
-
-```powershell
-.\pcmon.ps1 -NoOpen
-```
-
-Starts the HTTP server on port 9876 without auto-opening the browser. Data is available at `http://localhost:9876/data`.
-
-## Dashboard tabs
-
-- **Overview** — RAM, commit, CPU, disk at a glance
-- **RAM** — paged/non-paged pool, private memory breakdown, command lines
-- **Processes** — all processes sorted by working set
-- **Suspicious** — browser, dev tooling, AI helpers, security tools, drivers
-- **Services & Startup** — heavy services and startup items
-- **System** — drives, page file, PowerShell profiles
-
-## Metrics collected
-
-- Physical RAM (used/available)
-- Commit charge (committed bytes / commit limit)
-- Paged pool and non-paged pool (kernel memory)
-- Paging rate (pages/sec, reads/sec, writes/sec)
-- CPU utilization and processor queue length
-- Disk utilization and queue length
-- Network throughput (sent/received KB/s)
-- Per-process: WS, private memory, paged, virtual, CPU, threads, handles
-- Drive capacity and free space
-- Service state and startup items
-- Page file configuration
-- PowerShell profile paths
-
-## Future phases
-
-### Phase 2 — CLI packaging
-`bunx pcmon` (preferred) / `npm install -g pcmon` / `pnpm add -g pcmon` wrapping the same core behavior.
-
-### Phase 3 — GPU diagnostics
-- Overall GPU utilization
-- GPU adapter name
-- GPU memory usage
-
-### Phase 4 — Optional desktop shell
-Tauri (not Electron) as the future desktop container for users who prefer an installed app over a script.
-
-## Design principles
-
-- Local-first: all data stays on your machine
-- Lightweight: plain HTML/CSS/JS, no React until complexity justifies it
-- Diagnostic-focused: raw metrics with actionable interpretation
-- One core, multiple entry modes: direct PS1, CLI package, optional desktop shell
+MIT

@@ -4,31 +4,39 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 1.x     | :white_check_mark: |
+| 1.0.x   | :white_check_mark: |
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability within pcmon, please follow responsible disclosure:
+If you find a security vulnerability, please report it responsibly. Do not open public issues for security vulnerabilities.
 
-1. **Do NOT** create a public GitHub issue
-2. Send details privately to the maintainer
-3. Allow time for a fix before public disclosure
-4. Include:
-   - Description of the vulnerability
-   - Steps to reproduce
-   - Potential impact
-   - Suggested fix (if any)
+## Security Practices
 
-## Scope
+### Process Actions
+- All process kill/suspend/resume actions require user confirmation
+- Protected system processes (System, lsass, csrss, etc.) cannot be terminated
+- Process IDs are validated as integers only
+- No shell-string execution - uses native PowerShell cmdlets
 
-- PowerShell script injection
-- Remote code execution
-- Data exposure
-- Privilege escalation
-- Denial of service
+### Input Validation
+- All API inputs are validated
+- Process IDs extracted via regex `(\d+)` only
+- Config values validated for correct types
+- Path traversal protection
 
-## Response Timeline
+### Data Handling
+- All data stays local (local-first design)
+- No cloud connectivity
+- Snapshots stored locally in `snapshots/` directory
+- Config stored locally in `config.json`
 
-- Acknowledgment: 24-48 hours
-- Initial assessment: 3-5 days
-- Fix deployed: 2-4 weeks (depending on severity)
+### XSS Protection
+- Dashboard uses HTML escaping for user data
+- Process names escaped before display
+- No eval() or innerHTML with untrusted data
+
+## Known Limitations
+
+- Process actions require appropriate Windows permissions
+- Some metrics may require admin privileges for full accuracy
+- System tray mode requires Windows Forms support

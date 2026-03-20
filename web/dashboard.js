@@ -3,12 +3,116 @@
 
   /* ── Config ──────────────────────────────────────────────────────── */
   const HISTORY_SIZE = 40;
-  let refreshInterval = 2000;
+  const TABLE_UPDATE_INTERVAL = 10000;
+  let refreshInterval = 5000;
   let intervalId = null;
   let firstLoad = true;
+  let lastTableUpdate = 0;
 
   const history = { ram: [], cpu: [], disk: [], net: [], commit: [] };
   const prev = { ram: 0, cpu: 0, disk: 0, commit: 0 };
+  let cachedData = null;
+
+  /* ── Performance Monitoring ─────────────────────────────────────── */
+  let perf = { fetchMs: 0, renderMs: 0, cycleMs: 0, fps: 0, fpsFrames: 0, fpsLast: 0 };
+  let perfTimer = 0;
+  function trackFPS(ts) {
+    perf.fpsFrames++;
+    if (ts - perf.fpsLast >= 1000) {
+      perf.fps = perf.fpsFrames;
+      perf.fpsFrames = 0;
+      perf.fpsLast = ts;
+    }
+    requestAnimationFrame(trackFPS);
+  }
+  requestAnimationFrame(trackFPS);
+
+  function updateDebugPanel(data) {
+    const dbgFetch = EL('dbg-fetch');
+    const dbgRender = EL('dbg-render');
+    const dbgCycle = EL('dbg-cycle');
+    const dbgFps = EL('dbg-fps');
+    const dbgMem = EL('dbg-mem');
+    const dbgTl = EL('dbg-timeline');
+    const dbgSys = EL('dbg-sys-metrics');
+    const dbgCache = EL('dbg-cache');
+    const dbgErrCount = EL('js-err-count');
+    const dbgErrList = EL('js-errors');
+    const dbgPsErrs = EL('dbg-ps-errs');
+
+    if (dbgFetch) {
+      const fc = perf.fetchMs < 500 ? 'ok' : perf.fetchMs < 2000 ? 'warn' : 'bad';
+      dbgFetch.textContent = data && data._loading ? 'waiting...' : perf.fetchMs.toFixed(1) + ' ms';
+      dbgFetch.className = 'sval ' + (data && data._loading ? 'warn' : fc);
+      COL(EL('dbg-sc-fetch'), data && data._loading ? 50 : perf.fetchMs > 2000 ? 90 : perf.fetchMs > 500 ? 50 : 10);
+    }
+    if (dbgRender) {
+      const rc = perf.renderMs < 50 ? 'ok' : perf.renderMs < 200 ? 'warn' : 'bad';
+      dbgRender.textContent = perf.renderMs.toFixed(1) + ' ms';
+      dbgRender.className = 'sval ' + rc;
+      COL(EL('dbg-sc-render'), perf.renderMs > 200 ? 90 : perf.renderMs > 50 ? 50 : 10);
+    }
+    if (dbgCycle) {
+      const cc = perf.cycleMs < 2000 ? 'ok' : perf.cycleMs < 5000 ? 'warn' : 'bad';
+      dbgCycle.textContent = perf.cycleMs.toFixed(1) + ' ms';
+      dbgCycle.className = 'sval ' + cc;
+      COL(EL('dbg-sc-cycle'), perf.cycleMs > 5000 ? 90 : perf.cycleMs > 2000 ? 50 : 10);
+    }
+    if (dbgFps) {
+      const fps = perf.fps;
+      const fc = fps >= 55 ? 'ok' : fps >= 30 ? 'warn' : 'bad';
+      dbgFps.textContent = fps + ' fps';
+      dbgFps.className = 'sval ' + fc;
+      COL(EL('dbg-sc-fps'), fps < 30 ? 90 : fps < 55 ? 50 : 10);
+    }
+
+    if (dbgMem) {
+      const mem = performance.memory ? {
+        used: (performance.memory.usedJSHeapSize / 1048576).toFixed(0),
+        total: (performance.memory.totalJSHeapSize / 1048576).toFixed(0),
+        limit: (performance.memory.jsHeapSizeLimit / 1048576).toFixed(0)
+      } : null;
+      dbgMem.innerHTML = mem
+        ? `<div class="sys-row"><span>JS Heap Used</span><span>${mem.used} MB</span></div><div class="sys-row"><span>JS Heap Total</span><span>${mem.total} MB</span></div><div class="sys-row"><span>JS Heap Limit</span><span>${mem.limit} MB</span></div><div class="sys-row"><span>Utilization</span><span>${Math.round(mem.used/mem.limit*100)}%</span></div>`
+        : '<div class="note">Memory API not available (Chrome only)</div>';
+    }
+
+    const isLoading = data && data._loading;
+    if (dbgTl) {
+      dbgTl.innerHTML = `<div class="sys-row"><span>Status</span><span style="color:${isLoading ? 'var(--warn)' : 'var(--ok)'}">${isLoading ? 'Collecting data...' : 'Live'}</span></div><div class="sys-row"><span>Refresh Interval</span><span>${refreshInterval}ms</span></div><div class="sys-row"><span>Table Update</span><span>${TABLE_UPDATE_INTERVAL}ms</span></div><div class="sys-row"><span>Data Age</span><span>${cachedData && !isLoading ? ((Date.now() - perfTimer) / 1000).toFixed(1) + 's ago' : '—'}</span></div><div class="sys-row"><span>Processes</span><span>${data ? data.total_procs : '—'}</span></div><div class="sys-row"><span>DOM Nodes</span><span>${document.querySelectorAll('*').length}</span></div>`;
+    }
+
+    if (dbgSys && data) {
+      dbgSys.innerHTML = isLoading
+        ? '<div class="note">Waiting for data collection...</div>'
+        : `<div class="sys-row"><span>RAM Usage</span><span>${data.ram_pct}% (${data.ram_used_gb} GB / ${data.ram_total_gb} GB)</span></div><div class="sys-row"><span>CPU</span><span>${data.cpu_pct}%</span></div><div class="sys-row"><span>Commit</span><span>${data.commit_pct}% (${data.commit_gb} GB)</span></div><div class="sys-row"><span>GPU 3D</span><span>${data.gpu && data.gpu.available ? data.gpu.eng_type_totals['3d'].toFixed(1) + '%' : 'N/A'}</span></div><div class="sys-row"><span>Pages/sec</span><span>${data.pages_sec}</span></div><div class="sys-row"><span>Non-Paged Pool</span><span>${data.non_paged_mb} MB</span></div><div class="sys-row"><span>Perf (BE)</span><span>${data._perf_ms ? data._perf_ms + ' ms' : '—'}</span></div>`;
+    }
+
+    if (dbgCache) {
+      dbgCache.innerHTML = `<div class="sys-row"><span>Status</span><span style="color:${isLoading ? 'var(--warn)' : 'var(--ok)'}">${isLoading ? 'Loading' : 'Warm'}</span></div><div class="sys-row"><span>Collection</span><span>3s auto-refresh</span></div>`;
+    }
+
+    if (dbgErrCount) dbgErrCount.textContent = ERRORS.length;
+    if (dbgErrList) {
+      if (ERRORS.length === 0) {
+        dbgErrList.innerHTML = '<div class="note">No errors detected</div>';
+      } else {
+        dbgErrList.innerHTML = ERRORS.slice(-20).reverse().map(e => {
+          const d = new Date(e.ts);
+          const time = d.toLocaleTimeString();
+          const info = e.line ? ` at ${e.src}:${e.line}` : '';
+          return `<div class="err-entry ${e.type}"><span class="err-time">${time}</span><span class="err-type">${e.type.toUpperCase()}</span><span class="err-msg">${esc(e.msg)}${info}</span></div>`;
+        }).join('');
+      }
+    }
+
+    if (dbgPsErrs) {
+      const psErrBanner = EL('ps-errors');
+      if (psErrBanner && psErrBanner.textContent) {
+        dbgPsErrs.innerHTML = psErrBanner.textContent;
+      }
+    }
+  }
 
   /* ── Helpers ─────────────────────────────────────────────────────── */
   function getTrend(current, previous) {
@@ -183,8 +287,55 @@
     drawSparkline('spk-cm', history.commit, sparkColorVar(statusClass(history.commit.slice(-1)[0] || 0)));
   }
 
+  /* ── Process actions ─────────────────────────────────────────────── */
+  async function killProcess(pid, name) {
+    if (!confirm(`Kill process "${name}" (PID: ${pid})?`)) return;
+    try {
+      const res = await fetch(`/api/process/${pid}/kill`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        alert('Process terminated: ' + data.message);
+        fetchData();
+      } else {
+        alert('Failed: ' + data.error);
+      }
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  }
+
+  async function suspendProcess(pid, name) {
+    if (!confirm(`Suspend process "${name}" (PID: ${pid})?`)) return;
+    try {
+      const res = await fetch(`/api/process/${pid}/suspend`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        alert('Process suspended: ' + data.message);
+      } else {
+        alert('Failed: ' + data.error);
+      }
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  }
+
+  async function resumeProcess(pid, name) {
+    if (!confirm(`Resume process "${name}" (PID: ${pid})?`)) return;
+    try {
+      const res = await fetch(`/api/process/${pid}/resume`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        alert('Process resumed: ' + data.message);
+      } else {
+        alert('Failed: ' + data.error);
+      }
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  }
+
   /* ── Table rendering ─────────────────────────────────────────────── */
-  function renderTable(tbl, rows, cols) {
+  function renderTable(tbl, rows, cols, opts = {}) {
     if (!tbl) return;
     tbl.innerHTML = '';
     const thead = tbl.createTHead();
@@ -194,13 +345,33 @@
       th.textContent = c;
       hdr.appendChild(th);
     });
+    if (opts.actions) {
+      const th = document.createElement('th');
+      th.textContent = 'Actions';
+      hdr.appendChild(th);
+    }
     const tbody = tbl.createTBody();
-    rows.slice(0, 50).forEach(r => {
+    const maxRows = opts.maxRows || 50;
+    rows.slice(0, maxRows).forEach((r, rowIdx) => {
       const tr = tbody.insertRow();
       cols.forEach((_, i) => {
         const td = tr.insertCell();
         td.textContent = r[i] !== undefined ? r[i] : '';
       });
+      if (opts.actions && opts.processData && opts.processData[rowIdx]) {
+        const p = opts.processData[rowIdx];
+        if (p && p.pid) {
+          const td = tr.insertCell();
+          const btn = document.createElement("button");
+          btn.className = "btn-sm";
+          btn.title = "Kill";
+          btn.textContent = "K";
+          btn.dataset.pid = p.pid;
+          btn.dataset.name = p.name || "";
+          btn.addEventListener("click", function() { killProcess(this.dataset.pid, this.dataset.name); });
+          td.appendChild(btn);
+        }
+      }
     });
   }
 
@@ -264,6 +435,7 @@
   /* ── Master render ───────────────────────────────────────────────── */
   function renderAll(d) {
     if (!d) return;
+    cachedData = d;
 
     TXT(EL('ts'),       d.ts);
     TXT(EL('hdr-host'), d.hostname || '—');
@@ -349,7 +521,11 @@
     /* ── Sparklines ── */
     refreshSparklines(cpuPct, ramPct, diskPct);
 
-    /* ── Tables ── */
+    /* ── Tables (throttled every 10s) ── */
+    const now = Date.now();
+    const doTables = firstLoad || (now - lastTableUpdate > TABLE_UPDATE_INTERVAL);
+    if (doTables) lastTableUpdate = now;
+
     TXT(EL('ov-pc'), (d.total_procs || 0) + ' processes');
 
     if (firstLoad) {
@@ -365,10 +541,12 @@
       firstLoad = false;
     }
 
-    const topRamRows = (d.top_ram || []).slice(0, 20).map(p => [
+    if (doTables) {
+    const topRamData = (d.top_ram || []).slice(0, 20);
+    const topRamRows = topRamData.map(p => [
       p.name || '?', p.pid || 0, fmtMem(p.ws_mb), fmtNum(p.cpu_s, 1) + 's'
     ]);
-    renderTable(EL('ov-tbl'), topRamRows, ['Name','PID','WS','CPU']);
+    renderTable(EL('ov-tbl'), topRamRows, ['Name','PID','WS','CPU'], { actions: true, processData: topRamData });
 
     renderDrives(EL('disk-drives'), d.disks);
     renderDrives(EL('ov-disks'), d.disks);
@@ -398,17 +576,19 @@
     }
 
     /* RAM table */
-    const topPrivateRows = (d.top_private || []).slice(0,30).map(p => [
+    const topPrivateData = (d.top_private || []).slice(0,30);
+    const topPrivateRows = topPrivateData.map(p => [
       p.name||'?', p.pid||0, fmtMem(p.ws_mb), fmtMem(p.private_mb),
       fmtNum(p.cpu_s,1)+'s', p.threads||0, p.handles||0
     ]);
-    renderTable(EL('r-tbl'), topPrivateRows, ['Name','PID','WS','Private','CPU','Threads','Handles']);
+    renderTable(EL('r-tbl'), topPrivateRows, ['Name','PID','WS','Private','CPU','Threads','Handles'], { actions: true, processData: topPrivateData });
 
     /* CPU table */
-    const topCpuRows = (d.top_cpu || []).slice(0,20).map(p => [
+    const topCpuData = (d.top_cpu || []).slice(0,20);
+    const topCpuRows = topCpuData.map(p => [
       p.name||'?', p.pid||0, fmtNum(p.cpu_s,1)+'s', fmtMem(p.ws_mb), p.threads||0
     ]);
-    renderTable(EL('c-tbl'), topCpuRows, ['Name','PID','CPU Time','WS','Threads']);
+    renderTable(EL('c-tbl'), topCpuRows, ['Name','PID','CPU Time','WS','Threads'], { actions: true, processData: topCpuData });
 
     /* GPU */
     const gpu = d.gpu || {};
@@ -423,7 +603,7 @@
     }
     TXT(EL('g-status'), gpu.available ? (gpu.adapters?.[0]?.status || 'Active') : 'N/A');
     const eng = gpu.eng_type_totals || {};
-    TXT(EL('g-3d'),   eng['3d']          !== undefined ? eng['3d'].toFixed(1)          + '%' : 'N/A');
+    TXT(EL('g-3d'),   (eng['3d']         !== undefined ? eng['3d'].toFixed(1)         + '%' : 'N/A'));
     TXT(EL('g-vdec'), eng['videodecode'] !== undefined ? eng['videodecode'].toFixed(1)  + '%' : 'N/A');
     TXT(EL('g-venc'), eng['videoencode'] !== undefined ? eng['videoencode'].toFixed(1)  + '%' : 'N/A');
     renderGPUAdapters(EL('gpu-adapters'), gpu);
@@ -493,12 +673,14 @@
     renderTable(EL('profiles-tbl'), profRows, ['Path','Exists','Size']);
 
     /* All processes */
-    const allRows = (d.top_ram || []).map(p => [
+    const allProcessData = d.top_ram || [];
+    const allRows = allProcessData.map(p => [
       p.name||'?', p.pid||0, fmtMem(p.ws_mb), fmtMem(p.private_mb),
       fmtNum(p.cpu_s,1)+'s', p.threads||0, p.handles||0, p.path||''
     ]);
-    renderTable(EL('all-tbl'), allRows, ['Name','PID','WS','Private','CPU','Threads','Handles','Path']);
+    renderTable(EL('all-tbl'), allRows, ['Name','PID','WS','Private','CPU','Threads','Handles','Path'], { actions: true, processData: allProcessData });
     TXT(EL('all-pc'), (d.total_procs || 0) + ' processes');
+    }
 
     /* Alerts */
     setAlert('al-pg', 1000, d.pages_sec,    'al-pg-t');
@@ -524,18 +706,7 @@
   };
 
   function updateErrorDisplay() {
-    const el = EL('js-errors');
-    if (!el) return;
-    if (ERRORS.length === 0) {
-      el.innerHTML = '<div class="note">No errors detected</div>';
-      return;
-    }
-    el.innerHTML = ERRORS.slice(-20).reverse().map(e => {
-      const d = new Date(e.ts);
-      const time = d.toLocaleTimeString();
-      const info = e.line ? ` at ${e.src}:${e.line}` : '';
-      return `<div class="err-entry ${e.type}"><span class="err-time">${time}</span><span class="err-type">${e.type.toUpperCase()}</span><span class="err-msg">${esc(e.msg)}${info}</span></div>`;
-    }).join('');
+    if (cachedData) updateDebugPanel(cachedData);
   }
 
   async function fetchErrors() {
@@ -555,13 +726,22 @@
 
   /* ── Fetch ───────────────────────────────────────────────────────── */
   async function fetchData() {
+    const cycleStart = performance.now();
     try {
+      const fetchStart = performance.now();
       const res = await fetch('/data');
+      perf.fetchMs = performance.now() - fetchStart;
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
+      const renderStart = performance.now();
       renderAll(data);
+      perf.renderMs = performance.now() - renderStart;
+      perf.cycleMs = performance.now() - cycleStart;
+      perfTimer = Date.now();
+      updateDebugPanel(data);
       fetchErrors();
     } catch (e) {
+      perf.cycleMs = performance.now() - cycleStart;
       ERRORS.push({ ts: Date.now(), type: 'fetch', msg: e.message });
       if (ERRORS.length > MAX_ERRORS) ERRORS.shift();
       updateErrorDisplay();
@@ -575,6 +755,31 @@
     config: { refreshRate: refreshInterval, url: '' }
   };
 
+  function copyTableToClipboard(tableId) {
+    const tbl = document.getElementById(tableId);
+    if (!tbl) return;
+    let text = '';
+    const headers = tbl.querySelectorAll('thead th');
+    headers.forEach((th, i) => { text += th.textContent + (i < headers.length - 1 ? '\t' : ''); });
+    text += '\n';
+    const rows = tbl.querySelectorAll('tbody tr');
+    rows.forEach(tr => {
+      const cells = tr.querySelectorAll('td');
+      cells.forEach((td, i) => { text += td.textContent + (i < cells.length - 1 ? '\t' : ''); });
+      text += '\n';
+    });
+    navigator.clipboard.writeText(text).then(() => {
+      alert('Copied to clipboard!');
+    }).catch(() => {
+      alert('Failed to copy');
+    });
+  }
+
+  window.killProcess = killProcess;
+  window.suspendProcess = suspendProcess;
+  window.resumeProcess = resumeProcess;
+  window.copyTableToClipboard = copyTableToClipboard;
+
   /* ── Tabs ────────────────────────────────────────────────────────── */
   function initTabs() {
     const tabs = document.querySelectorAll('.ntab');
@@ -585,7 +790,7 @@
         document.querySelectorAll('.pg').forEach(p => p.classList.remove('on'));
         const target = document.getElementById('pg-' + tab.dataset.page);
         if (target) target.classList.add('on');
-        // Redraw sparklines on tab switch (canvas sizing)
+        if (tab.dataset.page === 'debug' && cachedData) updateDebugPanel(cachedData);
         setTimeout(() => {
           refreshSparklines(history.cpu.slice(-1)[0] || 0, history.ram.slice(-1)[0] || 0, history.disk.slice(-1)[0] || 0);
         }, 50);
@@ -597,8 +802,9 @@
   function initRefreshSelector() {
     const sel = EL('rf-sel');
     if (!sel) return;
+    refreshInterval = parseInt(sel.value, 10) || 5000;
     sel.addEventListener('change', () => {
-      refreshInterval = parseInt(sel.value, 10) || 2000;
+      refreshInterval = parseInt(sel.value, 10) || 5000;
       clearInterval(intervalId);
       intervalId = setInterval(fetchData, refreshInterval);
     });
@@ -714,7 +920,7 @@
         const color = c.direction === 'increased' || c.direction === 'new' ? 'var(--bad)' : c.direction === 'decreased' || c.direction === 'gone' ? 'var(--ok)' : 'var(--accent)';
         let extra = '';
         if (c.processes) {
-          extra = '<div class="compare-procs">' + c.processes.slice(0,5).map(p => `<span>${esc(p.name)} (${fmtMem(p.ws_mb * 1024)})</span>`).join('') + (c.count > 5 ? `<span>+${c.count-5} more</span>` : '') + '</div>';
+          extra = '<div class="compare-procs">' + c.processes.slice(0,5).map(p => `<span>${esc(p.name)} (${fmtMem(p.ws_mb)})</span>`).join('') + (c.count > 5 ? `<span>+${c.count-5} more</span>` : '') + '</div>';
         }
         html += `<div class="compare-item"><span class="compare-name">${esc(c.name)}</span><span class="compare-diff" style="color:${color}">${diff}${c.old !== undefined ? ' (' + c.old + '→' + c.new + '%)' : ''}</span>${extra}</div>`;
       });
@@ -742,6 +948,89 @@
     loadSnapshots();
   }
 
+  /* ── Report Generation ───────────────────────────────────────────── */
+  function generateReport() {
+    window.open('/api/report', '_blank');
+  }
+
+  function downloadReport() {
+    const a = document.createElement('a');
+    a.href = '/api/report/download';
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  function initReportButtons() {
+    const genBtn = EL('btn-gen-report');
+    if (genBtn) genBtn.addEventListener('click', generateReport);
+    const dlBtn = EL('btn-dl-report');
+    if (dlBtn) dlBtn.addEventListener('click', downloadReport);
+  }
+
+  /* ── Threshold settings ───────────────────────────────────────────── */
+  const THRESHOLD_DEFS = [
+    { key: 'ram_pct', label: 'RAM Usage %', unit: '%', default: 85 },
+    { key: 'cpu_pct', label: 'CPU Usage %', unit: '%', default: 90 },
+    { key: 'commit_pct', label: 'Commit Charge %', unit: '%', default: 80 },
+    { key: 'pages_sec', label: 'Pages / sec', unit: '/s', default: 1000 },
+    { key: 'non_paged_mb', label: 'Non-Paged Pool', unit: 'MB', default: 1500 },
+    { key: 'disk_pct', label: 'Disk Usage %', unit: '%', default: 90 },
+  ];
+
+  async function loadThresholds() {
+    try {
+      const res = await fetch('/api/config');
+      return await res.json();
+    } catch { return {}; }
+  }
+
+  async function saveThresholds(thresholds) {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(thresholds)
+    });
+    return res.ok;
+  }
+
+  async function renderThresholds() {
+    const container = EL('thresholds-form');
+    if (!container) return;
+    const data = await loadThresholds();
+    container.innerHTML = THRESHOLD_DEFS.map(t => {
+      const val = data[t.key] !== undefined ? data[t.key] : t.default;
+      return `<div class="threshold-row">
+        <label>${esc(t.label)}</label>
+        <input type="number" class="sbar" data-key="${t.key}" value="${val}" style="width:100px">
+        <span class="threshold-unit">${t.unit}</span>
+      </div>`;
+    }).join('');
+  }
+
+  async function saveThresholdsFromForm() {
+    const container = EL('thresholds-form');
+    const msgEl = EL('thresholds-msg');
+    if (!container) return;
+    const thresholds = {};
+    container.querySelectorAll('input[data-key]').forEach(input => {
+      thresholds[input.dataset.key] = parseFloat(input.value) || 0;
+    });
+    const ok = await saveThresholds(thresholds);
+    if (msgEl) {
+      msgEl.textContent = ok ? 'Saved!' : 'Error saving';
+      msgEl.style.color = ok ? 'var(--ok)' : 'var(--bad)';
+      setTimeout(() => { if (msgEl) msgEl.textContent = ''; }, 2000);
+    }
+  }
+
+  function initThresholds() {
+    renderThresholds();
+    const saveBtn = EL('btn-save-thresholds');
+    if (saveBtn) saveBtn.addEventListener('click', saveThresholdsFromForm);
+  }
+
   /* ── Resize handler ──────────────────────────────────────────────── */
   let resizeTimer;
   window.addEventListener('resize', () => {
@@ -761,6 +1050,8 @@
     initRefreshSelector();
     initSearchFilters();
     initSnapshots();
+    initThresholds();
+    initReportButtons();
     fetchData();
     intervalId = setInterval(fetchData, refreshInterval);
   }
