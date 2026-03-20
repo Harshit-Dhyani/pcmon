@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# IDE
+.idea/
+.vscode/
+
+# Build output
+dist/
+build/
+
+# Lock files (optional - uncomment if you want to track)
+# bun.lock
+
+# GitHub Wiki (managed separately)
+.github/wiki/
