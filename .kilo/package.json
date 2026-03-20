@@ -1,0 +1,8 @@
+{
+  "name": "pcmon",
+  "version": "1.0.0",
+  "description": "Local-first Windows system monitoring and diagnostics tool",
+  "scripts": {
+    "sync:skills": "bun run scripts/sync-skills.ts"
+  }
+}
