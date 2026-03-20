@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main, v1.0.0]
+  pull_request:
+    branches: [main, v1.0.0]
+
+jobs:
+  powershell-check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax check PowerShell
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Path . -Include *.ps1 -Recurse
+          foreach ($file in $files) {
+            $errors = $null
+            $null = [System.Management.Automation.PSParser]::Tokenize((Get-Content $file.FullName -Raw), [ref]$errors)
+            if ($errors) {
+              Write-Error "Syntax errors in $($file.FullName): $($errors.Count)"
+              exit 1
+            }
+          }
+          Write-Host "All PowerShell files passed syntax check"
+
+      - name: Test script loads
+        shell: pwsh
+        run: |
+          . ./pcmon.ps1 -Help
+          Write-Host "Script loaded successfully"
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for sensitive data
+        run: |
+          if grep -r "password\|secret\|api.key\|apikey" --include="*.ps1" --include="*.js" --include="*.ts" .; then
+            echo "Potential secrets found!"
+            exit 1
+          fi
+          echo "No obvious secrets detected"
+
+  sync-skills:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Sync skills
+        run: bun run sync:skills
+
+      - name: Check for changes
+        run: |
+          git status --porcelain
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Skills need syncing!"
+            git diff --stat
+            exit 1
+          fi
+          echo "Skills are in sync"
