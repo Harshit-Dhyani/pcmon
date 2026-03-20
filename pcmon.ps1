@@ -32,7 +32,8 @@ Requirements:
     exit 0
 }
 
-$ErrorActionPreference = "SilentlyContinue"
+$ErrorActionPreference = "Continue"
+$script:ErrorCount = 0
 $HOSTNAME = "localhost"
 $OPEN_BROWSER = -not ($NoOpen -or $ApiOnly)
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -92,7 +93,7 @@ function Get-DriveSnapshot {
 function Get-TopProcesses {
     $processes = Get-Process | ForEach-Object {
         $path = $null
-        try { $path = $_.Path } catch {}
+        try { $path = $_.Path } catch { $script:ErrorCount++ }
         [PSCustomObject]@{
             name       = $_.ProcessName
             pid        = $_.Id
@@ -197,7 +198,7 @@ function Get-PowerShellProfileInfo {
         $exists = Test-Path $p
         $sizeKb = 0
         if ($exists) {
-            try { $sizeKb = [math]::Round((Get-Item $p).Length / 1KB, 2) } catch {}
+            try { $sizeKb = [math]::Round((Get-Item $p).Length / 1KB, 2) } catch { $script:ErrorCount++ }
         }
         [PSCustomObject]@{
             path    = $p
@@ -239,12 +240,12 @@ function Get-GpuData {
 
     try {
         $memSamples = @()
-        try { $memSamples = (Get-Counter '\GPU Adapter Memory(*)\Dedicated Usage' -ErrorAction SilentlyContinue).CounterSamples } catch {}
+        try { $memSamples = (Get-Counter '\GPU Adapter Memory(*)\Dedicated Usage' -ErrorAction SilentlyContinue).CounterSamples } catch { $script:ErrorCount++ }
 
         foreach ($adapter in $adapters) {
             $dedBytes = 0
             foreach ($s in $memSamples) {
-                if ($s.Path -match [regex]::Escape($adapter.Name) -or $s.CookedValue -gt 0) {
+                if ($s.Path -match [regex]::Escape($adapter.Name) -and $s.CookedValue -gt 0) {
                     $dedBytes = [math]::Max($dedBytes, $s.CookedValue)
                 }
             }
