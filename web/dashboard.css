@@ -31,6 +31,8 @@
   --info:      #3d9eff;
   --info-dim:  rgba(61, 158, 255, 0.15);
   --info-glow: rgba(61, 158, 255, 0.3);
+  --accent:    #67b7ff;
+  --text-dim:  #8ba4cc;
 
   /* Typography */
   --mono: 'Geist Mono', monospace;
@@ -822,6 +824,22 @@ tbody td {
   font-size: 10px;
   color: var(--text2);
 }
+.btn {
+  padding: 8px 14px;
+  font-size: 12px;
+  background: var(--glass);
+  color: var(--text);
+  border: 1px solid var(--border2);
+  border-radius: var(--r);
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, color 0.2s;
+}
+.btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(103,183,255,0.08);
+}
+
 .btn-sm {
   padding: 4px 10px;
   font-size: 11px;
@@ -843,22 +861,21 @@ tbody td {
 }
 .btn-primary:hover { background: #4db3ff; }
 
-.err-entry { display:flex; gap:8px; padding:4px 0; border-bottom:1px solid var(--border); font-size:11px; }
-.err-entry .err-time { color: var(--text3); min-width:80px; }
-.err-entry .err-type { font-weight:700; min-width:60px; }
-.err-entry .err-msg { color: var(--text2); word-break:break-all; }
-.err-entry.fetch .err-type { color: var(--warn); }
-.err-entry.js .err-type { color: var(--bad); }
-.err-entry.promise .err-type { color: var(--accent); }
-.err-entry.api .err-type { color: var(--info); }
 
-.sys-row { display:flex; justify-content:space-between; padding:4px 0; font-size:12px; border-bottom:1px solid var(--border); }
-.sys-row:last-child { border-bottom: none; }
-.sys-row span:first-child { color: var(--text3); }
-.sys-row span:last-child { color: var(--text2); font-family:var(--mono); }
 
 .threshold-row { display:flex; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid var(--border); }
 .threshold-row:last-child { border-bottom: none; }
 .threshold-row label { flex:1; font-size:13px; color: var(--text2); }
 .threshold-row input[type="number"] { text-align:right; }
 .threshold-unit { color: var(--text3); font-size:12px; min-width:30px; }
+@media (max-width: 900px) {
+  .snap-controls { flex-wrap: wrap; }
+  .snap-grid { grid-template-columns: 1fr; }
+  .io-strip { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 560px) {
+  .io-strip { grid-template-columns: 1fr; }
+  .hdr { padding: 0 12px; }
+  .main, .alerts, .nav { padding-left: 12px; padding-right: 12px; }
+}

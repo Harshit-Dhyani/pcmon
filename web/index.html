@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
 <title>PC Monitor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -19,17 +20,21 @@
   </div>
   <div class="hdr-right">
     <div class="route-links">
-      <a href="/data" target="_blank" title="/data">data</a>
-      <a href="/health" target="_blank" title="/health">health</a>
-      <a href="/errors" target="_blank" title="/errors">errors</a>
-      <a href="/debug" target="_blank" title="/debug">debug</a>
-      <a href="/logs" target="_blank" title="/logs">logs</a>
+      <a href="/data" target="_blank" rel="noopener" title="/data">data</a>
+      <a href="/health" target="_blank" rel="noopener" title="/health">health</a>
+      <a href="/errors" target="_blank" rel="noopener" title="/errors">errors</a>
+      <a href="/debug" target="_blank" rel="noopener" title="/debug">debug</a>
+      <a href="/logs" target="_blank" rel="noopener" title="/logs">logs</a>
     </div>
     <span class="rf-lbl">Refresh</span>
     <select class="rf-sel" id="rf-sel">
-      <option value="5000" selected>5 s</option>
+      <option value="50">50 ms</option>
+      <option value="100">100 ms</option>
+      <option value="250">250 ms</option>
+      <option value="500">500 ms</option>
+      <option value="1000" selected>1 s</option>
       <option value="2000">2 s</option>
-      <option value="1000">1 s</option>
+      <option value="5000">5 s</option>
       <option value="10000">10 s</option>
     </select>
     <div class="ts" id="ts">--:--:--</div>
@@ -155,19 +160,23 @@
         <!-- Disk drives -->
         <div class="pnl">
           <div class="pnl-head"><span class="pnl-title">Disk Drives</span></div>
-          <div class="pnl-body" id="ov-disks">
-            <div class="sk sk-row"></div>
-            <div class="sk sk-row" style="margin-top:6px"></div>
+          <div class="pnl-body" id="ov-disks-wrap">
+            <div id="ov-disks-sk">
+              <div class="sk sk-row"></div>
+              <div class="sk sk-row" style="margin-top:6px"></div>
+            </div>
+            <div id="ov-disks" style="display:none"></div>
           </div>
         </div>
         <!-- I/O -->
         <div class="pnl">
           <div class="pnl-head"><span class="pnl-title">I/O &amp; Network</span></div>
-          <div class="pnl-body">
-            <div class="io-strip" id="ov-io">
+          <div class="pnl-body" id="ov-io-wrap">
+            <div id="ov-io-sk" class="io-strip">
               <div class="sk" style="height:52px;border-radius:8px"></div>
               <div class="sk" style="height:52px;border-radius:8px"></div>
             </div>
+            <div class="io-strip" id="ov-io" style="display:none"></div>
           </div>
         </div>
       </div>
@@ -273,19 +282,25 @@
 
   <!-- ── DISK & I/O ────────────────────────────────────────────────── -->
   <div id="pg-disk" class="pg">
-    <div class="io-strip" style="margin-bottom:16px" id="disk-io-strip">
-      <div class="sk" style="height:68px;border-radius:10px"></div>
-      <div class="sk" style="height:68px;border-radius:10px"></div>
-      <div class="sk" style="height:68px;border-radius:10px"></div>
-      <div class="sk" style="height:68px;border-radius:10px"></div>
+    <div id="disk-io-wrap" style="margin-bottom:16px">
+      <div class="io-strip" id="disk-io-sk">
+        <div class="sk" style="height:68px;border-radius:10px"></div>
+        <div class="sk" style="height:68px;border-radius:10px"></div>
+        <div class="sk" style="height:68px;border-radius:10px"></div>
+        <div class="sk" style="height:68px;border-radius:10px"></div>
+      </div>
+      <div class="io-strip" id="disk-io-strip" style="display:none"></div>
     </div>
 
     <div class="grid2">
       <div class="pnl">
         <div class="pnl-head"><span class="pnl-title">Drives</span></div>
-        <div class="pnl-body" id="disk-drives">
-          <div class="sk sk-row"></div>
-          <div class="sk sk-row" style="margin-top:6px"></div>
+        <div class="pnl-body" id="disk-drives-wrap">
+          <div id="disk-drives-sk">
+            <div class="sk sk-row"></div>
+            <div class="sk sk-row" style="margin-top:6px"></div>
+          </div>
+          <div id="disk-drives" style="display:none"></div>
         </div>
       </div>
 
@@ -328,8 +343,11 @@
     </div>
     <div class="pnl">
       <div class="pnl-head"><span class="pnl-title">GPU Adapters</span></div>
-      <div class="pnl-body" id="gpu-adapters">
-        <div class="sk sk-row"></div>
+      <div class="pnl-body" id="gpu-adapters-wrap">
+        <div id="gpu-adapters-sk">
+          <div class="sk sk-row"></div>
+        </div>
+        <div id="gpu-adapters" style="display:none"></div>
       </div>
     </div>
   </div>
@@ -355,9 +373,12 @@
     </div>
     <div class="pnl">
       <div class="pnl-head"><span class="pnl-title">Group Insights</span></div>
-      <div class="pnl-body" id="group-insights">
-        <div class="sk sk-row"></div>
-        <div class="sk sk-row" style="margin-top:6px"></div>
+      <div class="pnl-body" id="group-insights-wrap">
+        <div id="group-insights-sk">
+          <div class="sk sk-row"></div>
+          <div class="sk sk-row" style="margin-top:6px"></div>
+        </div>
+        <div id="group-insights" style="display:none"></div>
       </div>
     </div>
   </div>
@@ -408,9 +429,12 @@
   <div id="pg-system" class="pg">
     <div class="pnl" style="margin-bottom:16px">
       <div class="pnl-head"><span class="pnl-title">System Summary</span></div>
-      <div class="pnl-body" id="sys-summary">
-        <div class="sk sk-row"></div><div class="sk sk-row" style="margin-top:6px"></div>
-        <div class="sk sk-row" style="margin-top:6px"></div>
+      <div class="pnl-body" id="sys-summary-wrap">
+        <div id="sys-summary-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row" style="margin-top:6px"></div>
+          <div class="sk sk-row" style="margin-top:6px"></div>
+        </div>
+        <div id="sys-summary" style="display:none"></div>
       </div>
     </div>
     <div class="pnl" style="margin-bottom:16px">
@@ -455,24 +479,32 @@
 
   <!-- ── SNAPSHOTS ─────────────────────────────────────────────────── -->
   <div id="pg-snapshots" class="pg">
-    <div class="snap-controls">
+    <div class="snap-controls" id="snap-controls">
       <input class="sbar" id="snap-label" placeholder="Optional label (e.g., 'Before restart')" style="width:280px">
-      <button class="btn btn-primary" id="btn-save-snap">Save Snapshot</button>
+      <button type="button" class="btn btn-primary" id="btn-save-snap">Save Snapshot</button>
       <span class="snap-msg" id="snap-msg"></span>
-      <button class="btn" id="btn-gen-report" style="margin-left: 10px;">Generate Report</button>
-      <button class="btn" id="btn-dl-report" style="margin-left: 5px;">Download Report</button>
+      <button type="button" class="btn" id="btn-gen-report" style="margin-left: 10px;">Generate Report</button>
+      <button type="button" class="btn" id="btn-dl-report" style="margin-left: 5px;">Download Report</button>
     </div>
     <div class="snap-grid">
       <div class="pnl">
         <div class="pnl-head"><span class="pnl-title">Saved Snapshots</span></div>
-        <div class="tbl-scroll" style="max-height:400px">
-          <table id="snapshots-tbl"></table>
+        <div class="tbl-scroll" style="max-height:400px" id="snapshots-wrap">
+          <div id="snapshots-tbl-sk">
+            <div class="sk sk-row"></div><div class="sk sk-row" style="margin-top:6px"></div>
+          </div>
+          <table id="snapshots-tbl" style="display:none"></table>
         </div>
       </div>
       <div class="pnl">
         <div class="pnl-head"><span class="pnl-title">Comparison Result</span></div>
-        <div class="pnl-body" id="compare-result">
-          <div class="note">Select a snapshot and click "Compare" to see changes.</div>
+        <div class="pnl-body" id="compare-result-wrap">
+          <div id="compare-result-sk">
+            <div class="sk sk-row"></div><div class="sk sk-row" style="margin-top:6px"></div>
+          </div>
+          <div id="compare-result" style="display:none">
+            <div class="note">Select a snapshot and click "Compare" to see changes.</div>
+          </div>
         </div>
       </div>
     </div>
@@ -506,15 +538,16 @@
     <div class="grid2" style="margin-bottom:16px">
       <div class="pnl">
         <div class="pnl-head">Browser Memory</div>
-        <div class="pnl-body" id="dbg-mem">
-          <div class="sk sk-row"></div>
-          <div class="sk sk-row" style="margin-top:6px"></div>
+        <div class="pnl-body" id="dbg-mem-wrap">
+          <div id="dbg-mem-sk"><div class="sk sk-row"></div><div class="sk sk-row" style="margin-top:6px"></div></div>
+          <div id="dbg-mem" style="display:none"></div>
         </div>
       </div>
       <div class="pnl">
         <div class="pnl-head">Performance Timeline</div>
-        <div class="pnl-body" id="dbg-timeline" style="font-family:monospace;font-size:11px">
-          <div class="sk sk-row"></div>
+        <div class="pnl-body" id="dbg-timeline-wrap">
+          <div id="dbg-timeline-sk"><div class="sk sk-row"></div></div>
+          <div id="dbg-timeline" style="font-family:monospace;font-size:11px;display:none"></div>
         </div>
       </div>
     </div>
@@ -522,14 +555,16 @@
     <div class="grid2" style="margin-bottom:16px">
       <div class="pnl">
         <div class="pnl-head">System Metrics (from pcmon)</div>
-        <div class="pnl-body" id="dbg-sys-metrics">
-          <div class="sk sk-row"></div>
+        <div class="pnl-body" id="dbg-sys-metrics-wrap">
+          <div id="dbg-sys-metrics-sk"><div class="sk sk-row"></div></div>
+          <div id="dbg-sys-metrics" style="display:none"></div>
         </div>
       </div>
       <div class="pnl">
         <div class="pnl-head">Cache Status</div>
-        <div class="pnl-body" id="dbg-cache">
-          <div class="sk sk-row"></div>
+        <div class="pnl-body" id="dbg-cache-wrap">
+          <div id="dbg-cache-sk"><div class="sk sk-row"></div></div>
+          <div id="dbg-cache" style="display:none"></div>
         </div>
       </div>
     </div>
@@ -555,10 +590,10 @@
     <div class="pnl">
       <div class="pnl-head">Quick Links</div>
       <div style="padding:12px;font-family:monospace;font-size:11px">
-        <div style="margin:4px 0"><a href="/errors" target="_blank" style="color:var(--accent)">/errors</a> — PowerShell errors & system info</div>
-        <div style="margin:4px 0"><a href="/logs" target="_blank" style="color:var(--accent)">/logs</a> — Raw error log</div>
-        <div style="margin:4px 0"><a href="/debug" target="_blank" style="color:var(--accent)">/debug</a> — Backend cache state</div>
-        <div style="margin:4px 0"><a href="/health" target="_blank" style="color:var(--accent)">/health</a> — Server status</div>
+        <div style="margin:4px 0"><a href="/errors" target="_blank" rel="noopener" style="color:var(--accent)">/errors</a> — PowerShell errors & system info</div>
+        <div style="margin:4px 0"><a href="/logs" target="_blank" rel="noopener" style="color:var(--accent)">/logs</a> — Raw error log</div>
+        <div style="margin:4px 0"><a href="/debug" target="_blank" rel="noopener" style="color:var(--accent)">/debug</a> — Backend cache state</div>
+        <div style="margin:4px 0"><a href="/health" target="_blank" rel="noopener" style="color:var(--accent)">/health</a> — Server status</div>
       </div>
     </div>
   </div>
@@ -566,11 +601,44 @@
   <!-- ── SETTINGS ─────────────────────────────────────────────────────── -->
   <div id="pg-settings" class="pg">
     <div class="pnl">
-      <div class="pnl-head"><span class="pnl-title">Alert Thresholds</span></div>
-      <div class="pnl-body" id="thresholds-form">
-        <!-- threshold inputs rendered by JS -->
+      <div class="pnl-head"><span class="pnl-title">⚙ Connection</span></div>
+      <div class="pnl-body">
+        <div id="settings-conn-info" class="sys-info">
+          <div class="sys-row"><span>Status</span><span id="set-conn-status">Connecting...</span></div>
+          <div class="sys-row"><span>Method</span><span id="set-conn-method">—</span></div>
+          <div class="sys-row"><span>Refresh Rate</span><span id="set-refresh-val">—</span></div>
+          <div class="sys-row"><span>Latency</span><span id="set-latency">—</span></div>
+        </div>
+        <div style="margin-top:12px">
+          <label class="sbar" style="display:inline-block;margin-right:8px">Refresh Rate</label>
+          <select class="rf-sel" id="rf-sel-settings">
+            <option value="50">50 ms</option>
+            <option value="100">100 ms</option>
+            <option value="250">250 ms</option>
+            <option value="500">500 ms</option>
+            <option value="1000" selected>1 s</option>
+            <option value="2000">2 s</option>
+            <option value="5000">5 s</option>
+            <option value="10000">10 s</option>
+          </select>
+        </div>
+        <div class="note" style="margin-top:8px">
+          <span>⚡ WebSocket</span> = real-time, low latency<br>
+          <span>🔄 HTTP Polling</span> = fallback, higher latency
+        </div>
       </div>
-      <button id="btn-save-thresholds" class="btn-primary" style="margin-top:10px">Save Thresholds</button>
+    </div>
+
+    <div class="pnl" style="margin-top:16px">
+      <div class="pnl-head"><span class="pnl-title">Alert Thresholds</span></div>
+      <div class="pnl-body" id="thresholds-form-wrap">
+        <div id="thresholds-form-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row" style="margin-top:6px"></div>
+          <div class="sk sk-row" style="margin-top:6px"></div>
+        </div>
+        <div id="thresholds-form" style="display:none"></div>
+      </div>
+      <button type="button" id="btn-save-thresholds" class="btn-primary" style="margin-top:10px">Save Thresholds</button>
       <span id="thresholds-msg" style="margin-left:10px"></span>
     </div>
   </div>

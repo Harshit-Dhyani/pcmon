@@ -1,15 +1,21 @@
 (function () {
   'use strict';
 
-  console.log('[pcmon] Dashboard loading...');
-
   /* ── Config ──────────────────────────────────────────────────────── */
   const HISTORY_SIZE = 40;
   const TABLE_UPDATE_INTERVAL = 10000;
-  let refreshInterval = 5000;
-  let intervalId = null;
+  const DEFAULT_THRESHOLDS = { ram_pct: 85, cpu_pct: 90, commit_pct: 80, pages_sec: 1000, non_paged_mb: 1500, disk_pct: 90 };
+  let refreshInterval = 1000;
+  let pollTimer = null;
+  let pollInFlight = false;
   let firstLoad = true;
   let lastTableUpdate = 0;
+  let thresholds = { ...DEFAULT_THRESHOLDS };
+  let csrfToken = '';
+  let connectionMethod = 'unknown';
+  let eventSource = null;
+  let wsReconnectDelay = 1000;
+  let wsMaxReconnectDelay = 10000;
 
   const history = { ram: [], cpu: [], disk: [], net: [], commit: [] };
   const prev = { ram: 0, cpu: 0, disk: 0, commit: 0 };
@@ -77,21 +83,28 @@
       dbgMem.innerHTML = mem
         ? `<div class="sys-row"><span>JS Heap Used</span><span>${mem.used} MB</span></div><div class="sys-row"><span>JS Heap Total</span><span>${mem.total} MB</span></div><div class="sys-row"><span>JS Heap Limit</span><span>${mem.limit} MB</span></div><div class="sys-row"><span>Utilization</span><span>${Math.round(mem.used/mem.limit*100)}%</span></div>`
         : '<div class="note">Memory API not available (Chrome only)</div>';
+      hideSkeleton('dbg-mem-sk', 'dbg-mem');
     }
 
     const isLoading = data && data._loading;
     if (dbgTl) {
-      dbgTl.innerHTML = `<div class="sys-row"><span>Status</span><span style="color:${isLoading ? 'var(--warn)' : 'var(--ok)'}">${isLoading ? 'Collecting data...' : 'Live'}</span></div><div class="sys-row"><span>Refresh Interval</span><span>${refreshInterval}ms</span></div><div class="sys-row"><span>Table Update</span><span>${TABLE_UPDATE_INTERVAL}ms</span></div><div class="sys-row"><span>Data Age</span><span>${cachedData && !isLoading ? ((Date.now() - perfTimer) / 1000).toFixed(1) + 's ago' : '—'}</span></div><div class="sys-row"><span>Processes</span><span>${data ? data.total_procs : '—'}</span></div><div class="sys-row"><span>DOM Nodes</span><span>${document.querySelectorAll('*').length}</span></div>`;
+      const connIcon = connectionMethod === 'websocket' ? '⚡' : '🔄';
+      dbgTl.innerHTML = `<div class="sys-row"><span>Status</span><span style="color:${isLoading ? 'var(--warn)' : 'var(--ok)'}">${isLoading ? 'Collecting data...' : 'Live'}</span></div><div class="sys-row"><span>Connection</span><span>${connIcon} ${connectionMethod}</span></div><div class="sys-row"><span>Refresh</span><span>${refreshInterval}ms</span></div><div class="sys-row"><span>Table Update</span><span>${TABLE_UPDATE_INTERVAL}ms</span></div><div class="sys-row"><span>Data Age</span><span>${cachedData && !isLoading ? ((Date.now() - perfTimer) / 1000).toFixed(1) + 's ago' : '—'}</span></div><div class="sys-row"><span>Processes</span><span>${data ? data.total_procs : '—'}</span></div><div class="sys-row"><span>DOM Nodes</span><span>${document.querySelectorAll('*').length}</span></div>`;
+      hideSkeleton('dbg-timeline-sk', 'dbg-timeline');
     }
 
     if (dbgSys && data) {
       dbgSys.innerHTML = isLoading
         ? '<div class="note">Waiting for data collection...</div>'
         : `<div class="sys-row"><span>RAM Usage</span><span>${data.ram_pct}% (${data.ram_used_gb} GB / ${data.ram_total_gb} GB)</span></div><div class="sys-row"><span>CPU</span><span>${data.cpu_pct}%</span></div><div class="sys-row"><span>Commit</span><span>${data.commit_pct}% (${data.commit_gb} GB)</span></div><div class="sys-row"><span>GPU 3D</span><span>${data.gpu && data.gpu.available ? data.gpu.eng_type_totals['3d'].toFixed(1) + '%' : 'N/A'}</span></div><div class="sys-row"><span>Pages/sec</span><span>${data.pages_sec}</span></div><div class="sys-row"><span>Non-Paged Pool</span><span>${data.non_paged_mb} MB</span></div><div class="sys-row"><span>Perf (BE)</span><span>${data._perf_ms ? data._perf_ms + ' ms' : '—'}</span></div>`;
+      hideSkeleton('dbg-sys-metrics-sk', 'dbg-sys-metrics');
     }
 
     if (dbgCache) {
-      dbgCache.innerHTML = `<div class="sys-row"><span>Status</span><span style="color:${isLoading ? 'var(--warn)' : 'var(--ok)'}">${isLoading ? 'Loading' : 'Warm'}</span></div><div class="sys-row"><span>Collection</span><span>3s auto-refresh</span></div>`;
+      const connStatus = connectionMethod === 'sse' ? 'SSE Connected' : 'HTTP Polling';
+      const connColor = connectionMethod === 'sse' ? 'var(--ok)' : 'var(--warn)';
+      dbgCache.innerHTML = `<div class="sys-row"><span>Status</span><span style="color:${isLoading || pollInFlight ? 'var(--warn)' : 'var(--ok)'}">${isLoading || pollInFlight ? 'Collecting...' : 'Ready'}</span></div><div class="sys-row"><span>Connection</span><span style="color:${connColor}">${connStatus}</span></div><div class="sys-row"><span>Refresh</span><span>${refreshInterval}ms</span></div>`;
+      hideSkeleton('dbg-cache-sk', 'dbg-cache');
     }
 
     if (dbgErrCount) dbgErrCount.textContent = ERRORS.length;
@@ -168,7 +181,7 @@
     el.classList.add(statusClass(val));
   }
 
-  function fmtNum(n, dec = 1) { if (n === null || n === undefined || isNaN(n) || !isFinite(n)) return '—'; return n.toFixed(dec); }
+  function fmtNum(n, dec = 2) { if (n === null || n === undefined || isNaN(n) || !isFinite(n)) return '—'; return n.toFixed(dec); }
 
   function fmtMem(mb) {
     if (mb === null || mb === undefined || isNaN(mb) || !isFinite(mb)) return '—';
@@ -177,6 +190,13 @@
   }
 
   /* ── Skeleton teardown ───────────────────────────────────────────── */
+  function showSkeleton(skId, tableId) {
+    const sk = EL(skId);
+    const tbl = EL(tableId);
+    if (sk)  sk.style.display = '';
+    if (tbl) tbl.style.display = 'none';
+  }
+
   function hideSkeleton(skId, tableId) {
     const sk = EL(skId);
     const tbl = EL(tableId);
@@ -188,79 +208,107 @@
     if (cardEl) cardEl.classList.remove('loading');
   }
 
+  function showCardLoading(cardEl) {
+    if (cardEl && !cardEl.classList.contains('loading')) cardEl.classList.add('loading');
+  }
+
+  /* Show all data-section skeletons (called at fetch start) */
+  function showAllSkeletons() {
+    const cardIds = ['sc-ram','sc-cpu','sc-disk','sc-cm','r-sc-ram','r-sc-cm','r-sc-pg','c-sc-cpu','c-sc-pg'];
+    cardIds.forEach(id => { const el = EL(id); if (el) el.classList.add('loading'); });
+    showSkeleton('ov-tbl-sk',       'ov-tbl');
+    showSkeleton('r-tbl-sk',        'r-tbl');
+    showSkeleton('c-tbl-sk',        'c-tbl');
+    showSkeleton('sus-tbl-sk',      'sus-tbl');
+    showSkeleton('svc-tbl-sk',      'svc-tbl');
+    showSkeleton('startup-tbl-sk',  'startup-tbl');
+    showSkeleton('pagefile-tbl-sk', 'pagefile-tbl');
+    showSkeleton('profiles-tbl-sk', 'profiles-tbl');
+    showSkeleton('all-tbl-sk',      'all-tbl');
+    showSkeleton('ov-disks-sk',     'ov-disks');
+    showSkeleton('disk-drives-sk',  'disk-drives');
+    showSkeleton('disk-io-sk',      'disk-io-strip');
+    showSkeleton('ov-io-sk',        'ov-io');
+    showSkeleton('gpu-adapters-sk', 'gpu-adapters');
+    showSkeleton('group-insights-sk','group-insights');
+    showSkeleton('sys-summary-sk',  'sys-summary');
+    showSkeleton('dbg-mem-sk',      'dbg-mem');
+    showSkeleton('dbg-timeline-sk', 'dbg-timeline');
+    showSkeleton('dbg-sys-metrics-sk','dbg-sys-metrics');
+    showSkeleton('dbg-cache-sk',   'dbg-cache');
+  }
+
+  /* Hide all data-section skeletons (called on first data arrival) */
+  function hideAllSkeletons() {
+    const cardIds = ['sc-ram','sc-cpu','sc-disk','sc-cm','r-sc-ram','r-sc-cm','r-sc-pg','c-sc-cpu','c-sc-pg'];
+    cardIds.forEach(id => { const el = EL(id); if (el) el.classList.remove('loading'); });
+  }
+
   /* ── Canvas Sparklines ───────────────────────────────────────────── */
   function drawSparkline(canvasId, values, colorVar) {
     const canvas = EL(canvasId);
-    if (!canvas || !values || values.length < 2) return;
+    if (!canvas || !Array.isArray(values)) return;
 
-    // Filter out invalid values
-    const validValues = values.filter(v => typeof v === 'number' && !isNaN(v) && isFinite(v));
+    const validValues = values.filter(v => typeof v === 'number' && Number.isFinite(v));
     if (validValues.length < 2) return;
 
     const dpr = window.devicePixelRatio || 1;
-    const rect = canvas.parentElement.getBoundingClientRect();
-    const W = Math.max(rect.width || 200, 100);
-    const H = parseInt(canvas.style.height) || 32;
+    const rect = canvas.parentElement ? canvas.parentElement.getBoundingClientRect() : { width: 200, height: 32 };
+    const W = Math.max(Math.round(rect.width || 200), 100);
+    const H = parseInt(canvas.style.height, 10) || canvas.clientHeight || 32;
 
-    canvas.style.width  = W + 'px';
+    canvas.style.width = W + 'px';
     canvas.style.height = H + 'px';
-    canvas.width  = W * dpr;
-    canvas.height = H * dpr;
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
 
     const ctx = canvas.getContext('2d');
-    ctx.scale(dpr, dpr);
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
 
-    const max  = Math.max(...validValues, 1);
-    const step = W / (validValues.length - 1 || 1);
+    const max = Math.max(...validValues, 1);
+    const step = validValues.length > 1 ? W / (validValues.length - 1) : W;
 
-    // resolve css var color
     const style = getComputedStyle(document.documentElement);
     const color = style.getPropertyValue(colorVar).trim() || '#00f5b0';
 
-    // Build path
     ctx.beginPath();
     validValues.forEach((v, i) => {
       const x = i * step;
       const y = H - (v / max) * (H - 4) - 2;
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
     });
 
-    // Stroke
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
     ctx.lineJoin = 'round';
-    ctx.lineCap  = 'round';
-
-    // Glow
+    ctx.lineCap = 'round';
     ctx.shadowColor = color;
-    ctx.shadowBlur  = 6;
+    ctx.shadowBlur = 6;
     ctx.stroke();
     ctx.shadowBlur = 0;
 
-    // Fill gradient
     const lastX = (validValues.length - 1) * step;
-    const lastY = H - (validValues[validValues.length - 1] / max) * (H - 4) - 2;
     ctx.lineTo(lastX, H);
     ctx.lineTo(0, H);
     ctx.closePath();
-    const grad = ctx.createLinearGradient(0, 0, 0, H);
-    grad.addColorStop(0, color.replace(')', ', 0.18)').replace('rgb(','rgba(').replace('#', 'rgba(').replace(/^rgba\(#(..)(..)(..)/, (m,r,g,b) => `rgba(${parseInt(r,16)},${parseInt(g,16)},${parseInt(b,16)}`));
-    // Simpler approach using opacity
     ctx.fillStyle = hexOrVarToAlpha(color, 0.12);
     ctx.fill();
   }
 
   function hexOrVarToAlpha(color, alpha) {
-    // color may be hex like #00f5b0 or an rgb string
     if (color.startsWith('#')) {
-      const r = parseInt(color.slice(1,3),16);
-      const g = parseInt(color.slice(3,5),16);
-      const b = parseInt(color.slice(5,7),16);
+      let hex = color.slice(1);
+      if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+      const r = parseInt(hex.slice(0,2),16);
+      const g = parseInt(hex.slice(2,4),16);
+      const b = parseInt(hex.slice(4,6),16);
       return `rgba(${r},${g},${b},${alpha})`;
     }
     if (color.startsWith('rgb(')) {
-      return color.replace('rgb(','rgba(').replace(')',`,${alpha})`);
+      return color.replace(/\)$/,`,${alpha})`).replace('rgb(','rgba(');
     }
     return `rgba(0,245,176,${alpha})`;
   }
@@ -289,11 +337,83 @@
     drawSparkline('spk-cm', history.commit, sparkColorVar(statusClass(history.commit.slice(-1)[0] || 0)));
   }
 
+  function authHeaders(extra = {}) {
+    return csrfToken ? { ...extra, 'X-PCMON-CSRF': csrfToken } : { ...extra };
+  }
+
+  function scheduleNextFetch(delay = refreshInterval) {
+    clearTimeout(pollTimer);
+    pollTimer = setTimeout(fetchData, Math.max(250, delay));
+  }
+
+  async function loadBootstrap() {
+    try {
+      const res = await fetch('/api/bootstrap', { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      csrfToken = data.csrf_token || '';
+      thresholds = { ...DEFAULT_THRESHOLDS, ...(data.thresholds || {}) };
+    } catch {}
+  }
+
+  function initWebSocket() {
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+    try {
+      eventSource = new EventSource('/stream');
+      eventSource.onopen = () => {
+        connectionMethod = 'sse';
+        wsReconnectDelay = 1000;
+        if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+        pollInFlight = false;
+        updateSettingsConnInfo();
+      };
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          const renderStart = performance.now();
+          renderAll(data);
+          perf.renderMs = performance.now() - renderStart;
+          perf.cycleMs = perf.renderMs;
+          perfTimer = Date.now();
+          pollInFlight = false;
+          cachedData = data;
+          updateDebugPanel(data);
+          updateSettingsConnInfo();
+        } catch (e) {}
+      };
+      eventSource.onerror = () => {
+        connectionMethod = 'http';
+        eventSource.close();
+        eventSource = null;
+        setTimeout(() => {
+          initWebSocket();
+        }, wsReconnectDelay);
+        wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, wsMaxReconnectDelay);
+        startHTTPPolling();
+      };
+    } catch (e) {
+      connectionMethod = 'http';
+      startHTTPPolling();
+    }
+  }
+
+  function startHTTPPolling() {
+    if (pollTimer) return;
+    connectionMethod = 'http';
+    fetchData();
+  }
+
   /* ── Process actions ─────────────────────────────────────────────── */
   async function killProcess(pid, name) {
     if (!confirm(`Kill process "${name}" (PID: ${pid})?`)) return;
     try {
-      const res = await fetch(`/api/process/${pid}/kill`, { method: 'POST' });
+      const res = await fetch(`/api/process/${pid}/kill`, {
+        method: 'POST',
+        headers: authHeaders({ 'X-PCMON-Confirm': '1' })
+      });
       const data = await res.json();
       if (data.success) {
         alert('Process terminated: ' + data.message);
@@ -309,7 +429,10 @@
   async function suspendProcess(pid, name) {
     if (!confirm(`Suspend process "${name}" (PID: ${pid})?`)) return;
     try {
-      const res = await fetch(`/api/process/${pid}/suspend`, { method: 'POST' });
+      const res = await fetch(`/api/process/${pid}/suspend`, {
+        method: 'POST',
+        headers: authHeaders({ 'X-PCMON-Confirm': '1' })
+      });
       const data = await res.json();
       if (data.success) {
         alert('Process suspended: ' + data.message);
@@ -324,7 +447,10 @@
   async function resumeProcess(pid, name) {
     if (!confirm(`Resume process "${name}" (PID: ${pid})?`)) return;
     try {
-      const res = await fetch(`/api/process/${pid}/resume`, { method: 'POST' });
+      const res = await fetch(`/api/process/${pid}/resume`, {
+        method: 'POST',
+        headers: authHeaders({ 'X-PCMON-Confirm': '1' })
+      });
       const data = await res.json();
       if (data.success) {
         alert('Process resumed: ' + data.message);
@@ -353,7 +479,7 @@
       hdr.appendChild(th);
     }
     const tbody = tbl.createTBody();
-    const maxRows = opts.maxRows || 50;
+    const maxRows = opts.maxRows || 30;
     rows.slice(0, maxRows).forEach((r, rowIdx) => {
       const tr = tbody.insertRow();
       cols.forEach((_, i) => {
@@ -364,14 +490,22 @@
         const p = opts.processData[rowIdx];
         if (p && p.pid) {
           const td = tr.insertCell();
-          const btn = document.createElement("button");
-          btn.className = "btn-sm";
-          btn.title = "Kill";
-          btn.textContent = "K";
-          btn.dataset.pid = p.pid;
-          btn.dataset.name = p.name || "";
-          btn.addEventListener("click", function() { killProcess(this.dataset.pid, this.dataset.name); });
-          td.appendChild(btn);
+          const actions = [
+            { label: 'K', title: 'Kill process', fn: killProcess },
+            { label: 'S', title: 'Suspend process', fn: suspendProcess },
+            { label: 'R', title: 'Resume process', fn: resumeProcess }
+          ];
+          actions.forEach((action, idx) => {
+            const btn = document.createElement('button');
+            btn.className = 'btn-sm';
+            btn.title = action.title;
+            btn.textContent = action.label;
+            btn.dataset.pid = p.pid;
+            btn.dataset.name = p.name || '';
+            btn.addEventListener('click', () => action.fn(p.pid, p.name || ''));
+            if (idx > 0) btn.style.marginLeft = '4px';
+            td.appendChild(btn);
+          });
         }
       }
     });
@@ -434,11 +568,25 @@
     }
   }
 
+  function applyAlerts(d) {
+    const liveThresholds = d && d.thresholds ? { ...thresholds, ...d.thresholds } : thresholds;
+    setAlert('al-pg', liveThresholds.pages_sec, d.pages_sec, 'al-pg-t');
+    setAlert('al-cm', liveThresholds.commit_pct, d.commit_pct, 'al-cm-t');
+    setAlert('al-np', liveThresholds.non_paged_mb, d.non_paged_mb, 'al-np-t');
+    setAlert('al-gpu', 90, d.gpu && d.gpu.eng_type_totals ? d.gpu.eng_type_totals['3d'] : 0, 'al-gpu-t');
+  }
+
   /* ── Master render ───────────────────────────────────────────────── */
   function renderAll(d) {
-    console.log('[pcmon] renderAll called', d ? 'with data' : 'no data');
     if (!d) return;
+    
+    if (history.ram.length > 30) history.ram = history.ram.slice(-30);
+    if (history.cpu.length > 30) history.cpu = history.cpu.slice(-30);
+    if (history.disk.length > 30) history.disk = history.disk.slice(-30);
+    if (history.net.length > 30) history.net = history.net.slice(-30);
+    
     cachedData = d;
+    if (d.thresholds) thresholds = { ...thresholds, ...d.thresholds };
 
     TXT(EL('ts'),       d.ts);
     TXT(EL('hdr-host'), d.hostname || '—');
@@ -451,7 +599,6 @@
     COL(EL('sv-ram'), ramPct); FILL(EL('sf-ram'), ramPct);
     SBADGE(EL('sb-ram'), ramPct); SCARD(EL('sc-ram'), ramPct);
     unloadCard(EL('sc-ram'));
-    console.log('[pcmon] RAM section done, calling unloadCard for sc-ram:', !!EL('sc-ram'));
     TXT(EL('sv-ram-trend'), getTrend(ramPct, prev.ram));
     prev.ram = ramPct;
 
@@ -524,42 +671,40 @@
     /* ── Sparklines ── */
     refreshSparklines(cpuPct, ramPct, diskPct);
 
-    /* ── Tables (throttled every 10s) ── */
+    /* Tables (throttled every 10s for re-render, but always hide skeletons) */
     const now = Date.now();
     const doTables = firstLoad || (now - lastTableUpdate > TABLE_UPDATE_INTERVAL);
     if (doTables) lastTableUpdate = now;
 
     TXT(EL('ov-pc'), (d.total_procs || 0) + ' processes');
 
+    hideSkeleton('ov-tbl-sk',       'ov-tbl');
+    hideSkeleton('r-tbl-sk',        'r-tbl');
+    hideSkeleton('c-tbl-sk',        'c-tbl');
+    hideSkeleton('sus-tbl-sk',      'sus-tbl');
+    hideSkeleton('svc-tbl-sk',      'svc-tbl');
+    hideSkeleton('startup-tbl-sk',  'startup-tbl');
+    hideSkeleton('pagefile-tbl-sk', 'pagefile-tbl');
+    hideSkeleton('profiles-tbl-sk', 'profiles-tbl');
+    hideSkeleton('all-tbl-sk',      'all-tbl');
+
     if (firstLoad) {
-      hideSkeleton('ov-tbl-sk',       'ov-tbl');
-      hideSkeleton('r-tbl-sk',        'r-tbl');
-      hideSkeleton('c-tbl-sk',        'c-tbl');
-      hideSkeleton('sus-tbl-sk',      'sus-tbl');
-      hideSkeleton('svc-tbl-sk',      'svc-tbl');
-      hideSkeleton('startup-tbl-sk',  'startup-tbl');
-      hideSkeleton('pagefile-tbl-sk', 'pagefile-tbl');
-      hideSkeleton('profiles-tbl-sk', 'profiles-tbl');
-      hideSkeleton('all-tbl-sk',      'all-tbl');
+      hideAllSkeletons();
       firstLoad = false;
     }
 
-    if (doTables) {
-    const topRamData = (d.top_ram || []).slice(0, 20);
-    const topRamRows = topRamData.map(p => [
-      p.name || '?', p.pid || 0, fmtMem(p.ws_mb), fmtNum(p.cpu_s, 1) + 's'
-    ]);
-    renderTable(EL('ov-tbl'), topRamRows, ['Name','PID','WS','CPU'], { actions: true, processData: topRamData });
-
-    renderDrives(EL('disk-drives'), d.disks);
-    renderDrives(EL('ov-disks'), d.disks);
-
-    /* I/O strip */
+    /* Always update dynamic content — hide skeletons on every refresh */
     const ioHtml = io => `
       <div class="io-card">
         <span class="io-lbl">${io.label}</span>
         <span class="io-val">${io.val}</span>
       </div>`;
+
+    renderDrives(EL('disk-drives'), d.disks);
+    renderDrives(EL('ov-disks'), d.disks);
+    hideSkeleton('disk-drives-sk', 'disk-drives');
+    hideSkeleton('ov-disks-sk', 'ov-disks');
+
     const diskIo = EL('disk-io-strip');
     if (diskIo) {
       diskIo.innerHTML = [
@@ -568,6 +713,7 @@
         { label: 'Net Sent',   val: fmtNum(d.net_sent_kb)   + ' KB/s' },
         { label: 'Net Recv',   val: fmtNum(d.net_recv_kb)   + ' KB/s' },
       ].map(ioHtml).join('');
+      hideSkeleton('disk-io-sk', 'disk-io-strip');
     }
 
     const ovIo = EL('ov-io');
@@ -576,22 +722,8 @@
         { label: 'Disk R/W',      val: fmtNum(d.disk_read_mb) + ' / ' + fmtNum(d.disk_write_mb) + ' MB/s' },
         { label: 'Net Sent/Recv', val: fmtNum(d.net_sent_kb) + ' / ' + fmtNum(d.net_recv_kb) + ' KB/s'   },
       ].map(ioHtml).join('');
+      hideSkeleton('ov-io-sk', 'ov-io');
     }
-
-    /* RAM table */
-    const topPrivateData = (d.top_private || []).slice(0,30);
-    const topPrivateRows = topPrivateData.map(p => [
-      p.name||'?', p.pid||0, fmtMem(p.ws_mb), fmtMem(p.private_mb),
-      fmtNum(p.cpu_s,1)+'s', p.threads||0, p.handles||0
-    ]);
-    renderTable(EL('r-tbl'), topPrivateRows, ['Name','PID','WS','Private','CPU','Threads','Handles'], { actions: true, processData: topPrivateData });
-
-    /* CPU table */
-    const topCpuData = (d.top_cpu || []).slice(0,20);
-    const topCpuRows = topCpuData.map(p => [
-      p.name||'?', p.pid||0, fmtNum(p.cpu_s,1)+'s', fmtMem(p.ws_mb), p.threads||0
-    ]);
-    renderTable(EL('c-tbl'), topCpuRows, ['Name','PID','CPU Time','WS','Threads'], { actions: true, processData: topCpuData });
 
     /* GPU */
     const gpu = d.gpu || {};
@@ -610,6 +742,7 @@
     TXT(EL('g-vdec'), eng['videodecode'] !== undefined ? eng['videodecode'].toFixed(1)  + '%' : 'N/A');
     TXT(EL('g-venc'), eng['videoencode'] !== undefined ? eng['videoencode'].toFixed(1)  + '%' : 'N/A');
     renderGPUAdapters(EL('gpu-adapters'), gpu);
+    hideSkeleton('gpu-adapters-sk', 'gpu-adapters');
     setAlert('al-gpu', 90, eng['3d'], 'al-gpu-t');
 
     /* Groups */
@@ -630,7 +763,44 @@
     if (gi) {
       gi.innerHTML = (d.insights || []).map(t => `<div class="insight">${esc(t)}</div>`).join('');
       if (!d.insights || d.insights.length === 0) gi.innerHTML = '<div class="note" style="padding:6px 0">No insights yet.</div>';
+      hideSkeleton('group-insights-sk', 'group-insights');
     }
+
+    /* System */
+    const sysSummary = EL('sys-summary');
+    if (sysSummary) {
+      sysSummary.innerHTML = [
+        ['Hostname',        esc(d.hostname) || '—'],
+        ['OS',              esc(d.os_caption) || '—'],
+        ['Total Processes', d.total_procs || 0],
+        ['RAM Total',       fmtMem(d.ram_total_gb * 1024)],
+        ['Commit Limit',    fmtMem(d.limit_gb * 1024)],
+      ].map(([k,v]) => `<div class="sys-row"><span>${k}</span><span>${v}</span></div>`).join('');
+      hideSkeleton('sys-summary-sk', 'sys-summary');
+    }
+
+    /* Throttled tables — only re-render every TABLE_UPDATE_INTERVAL */
+    if (doTables) {
+    const topRamData = (d.top_ram || []).slice(0, 20);
+    const topRamRows = topRamData.map(p => [
+      p.name || '?', p.pid || 0, fmtMem(p.ws_mb), fmtNum(p.cpu_s, 1) + 's'
+    ]);
+    renderTable(EL('ov-tbl'), topRamRows, ['Name','PID','WS','CPU'], { actions: true, processData: topRamData });
+
+    /* RAM table */
+    const topPrivateData = (d.top_private || []).slice(0,30);
+    const topPrivateRows = topPrivateData.map(p => [
+      p.name||'?', p.pid||0, fmtMem(p.ws_mb), fmtMem(p.private_mb),
+      fmtNum(p.cpu_s,1)+'s', p.threads||0, p.handles||0
+    ]);
+    renderTable(EL('r-tbl'), topPrivateRows, ['Name','PID','WS','Private','CPU','Threads','Handles'], { actions: true, processData: topPrivateData });
+
+    /* CPU table */
+    const topCpuData = (d.top_cpu || []).slice(0,20);
+    const topCpuRows = topCpuData.map(p => [
+      p.name||'?', p.pid||0, fmtNum(p.cpu_s,1)+'s', fmtMem(p.ws_mb), p.threads||0
+    ]);
+    renderTable(EL('c-tbl'), topCpuRows, ['Name','PID','CPU Time','WS','Threads'], { actions: true, processData: topCpuData });
 
     /* Suspicious */
     const susRows = (d.suspicious || []).map(p => [
@@ -650,18 +820,6 @@
     ]);
     renderTable(EL('startup-tbl'), startupRows, ['Name','Command','Location','User']);
 
-    /* System */
-    const sysSummary = EL('sys-summary');
-    if (sysSummary) {
-      sysSummary.innerHTML = [
-        ['Hostname',        esc(d.hostname) || '—'],
-        ['OS',              esc(d.os_caption) || '—'],
-        ['Total Processes', d.total_procs || 0],
-        ['RAM Total',       fmtMem(d.ram_total_gb * 1024)],
-        ['Commit Limit',    fmtMem(d.limit_gb * 1024)],
-      ].map(([k,v]) => `<div class="sys-row"><span>${k}</span><span>${v}</span></div>`).join('');
-    }
-
     const pfRows = (d.pagefile || []).map(p => [
       p.Name||'?',
       p.AllocatedBaseSize ? fmtMem(p.AllocatedBaseSize) : 'Auto',
@@ -676,7 +834,7 @@
     renderTable(EL('profiles-tbl'), profRows, ['Path','Exists','Size']);
 
     /* All processes */
-    const allProcessData = d.top_ram || [];
+    const allProcessData = d.all_processes || d.top_ram || [];
     const allRows = allProcessData.map(p => [
       p.name||'?', p.pid||0, fmtMem(p.ws_mb), fmtMem(p.private_mb),
       fmtNum(p.cpu_s,1)+'s', p.threads||0, p.handles||0, p.path||''
@@ -686,9 +844,7 @@
     }
 
     /* Alerts */
-    setAlert('al-pg', 1000, d.pages_sec,    'al-pg-t');
-    setAlert('al-cm', 80,   d.commit_pct,   'al-cm-t');
-    setAlert('al-np', 500,  d.non_paged_mb, 'al-np-t');
+    applyAlerts(d);
   }
 
   /* ── Error tracking ─────────────────────────────────────────────── */
@@ -714,40 +870,77 @@
 
   async function fetchErrors() {
     try {
-      const res = await fetch('/errors');
+      const res = await fetch('/errors', { cache: 'no-store' });
       if (!res.ok) return;
       const data = await res.json();
       const psErrEl = EL('ps-errors');
-      if (psErrEl && data.error_count > 0) {
-        psErrEl.innerHTML = `<div class="err-banner">PowerShell errors: ${data.error_count} | <a href="/logs" target="_blank">View logs</a> | <a href="/debug" target="_blank">Debug</a></div>`;
+      if (psErrEl) {
+        if (data.error_count > 0) {
+          psErrEl.innerHTML = `<div class="err-banner">PowerShell errors: ${data.error_count} | <a href="/logs" target="_blank" rel="noopener">View logs</a> | <a href="/debug" target="_blank" rel="noopener">Debug</a></div>`;
+        } else {
+          psErrEl.innerHTML = '';
+        }
       }
-      ERRORS.push({ ts: Date.now(), type: 'api', msg: `API Error Count: ${data.error_count}` });
-      if (ERRORS.length > MAX_ERRORS) ERRORS.shift();
+      if (cachedData) {
+        cachedData._psErrorCount = data.error_count || 0;
+      }
       updateErrorDisplay();
     } catch {}
   }
 
   /* ── Fetch ───────────────────────────────────────────────────────── */
   async function fetchData() {
+    if (pollInFlight) return;
+    pollInFlight = true;
     const cycleStart = performance.now();
+    let data = null;
+    let fetchError = null;
+
+    if (!cachedData) showAllSkeletons();
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const fetchStart = performance.now();
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), Math.max(5000, refreshInterval + 2000));
+        const res = await fetch('/data', { cache: 'no-store', signal: controller.signal });
+        clearTimeout(timeoutId);
+        perf.fetchMs = performance.now() - fetchStart;
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        data = await res.json();
+        break;
+      } catch (e) {
+        fetchError = e;
+        if (attempt === 1) {
+          const msg = e && e.name === 'AbortError' ? 'Timeout, retrying...' : 'Error: ' + (e.message || e);
+          ERRORS.push({ ts: Date.now(), type: 'fetch', msg });
+          if (ERRORS.length > MAX_ERRORS) ERRORS.shift();
+          await new Promise(r => setTimeout(r, 500));
+        }
+      }
+    }
+
     try {
-      const fetchStart = performance.now();
-      const res = await fetch('/data');
-      perf.fetchMs = performance.now() - fetchStart;
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
-      const renderStart = performance.now();
-      renderAll(data);
-      perf.renderMs = performance.now() - renderStart;
-      perf.cycleMs = performance.now() - cycleStart;
-      perfTimer = Date.now();
-      updateDebugPanel(data);
-      fetchErrors();
-    } catch (e) {
-      perf.cycleMs = performance.now() - cycleStart;
-      ERRORS.push({ ts: Date.now(), type: 'fetch', msg: e.message });
-      if (ERRORS.length > MAX_ERRORS) ERRORS.shift();
-      updateErrorDisplay();
+      if (data) {
+        const renderStart = performance.now();
+        renderAll(data);
+        perf.renderMs = performance.now() - renderStart;
+        perf.cycleMs = performance.now() - cycleStart;
+        perfTimer = Date.now();
+        updateDebugPanel(data);
+        fetchErrors();
+      } else {
+        perf.cycleMs = performance.now() - cycleStart;
+        if (fetchError && fetchError.name !== 'AbortError') {
+          ERRORS.push({ ts: Date.now(), type: 'fetch', msg: fetchError.message || String(fetchError) });
+          if (ERRORS.length > MAX_ERRORS) ERRORS.shift();
+        }
+        if (cachedData) updateDebugPanel({ ...cachedData, _loading: true });
+        updateErrorDisplay();
+      }
+    } finally {
+      pollInFlight = false;
+      scheduleNextFetch(refreshInterval);
     }
   }
 
@@ -755,7 +948,7 @@
     errors: ERRORS,
     fetch: fetchData,
     fetchErrors,
-    config: { refreshRate: refreshInterval, url: '' }
+    config: { refreshRate: refreshInterval, url: '', get thresholds() { return thresholds; } }
   };
 
   function copyTableToClipboard(tableId) {
@@ -802,15 +995,56 @@
   }
 
   /* ── Refresh selector ────────────────────────────────────────────── */
+  function updateSettingsConnInfo() {
+    const statusEl = EL('set-conn-status');
+    const methodEl = EL('set-conn-method');
+    const refreshEl = EL('set-refresh-val');
+    const latencyEl = EL('set-latency');
+    const settingsSel = EL('rf-sel-settings');
+    
+    if (statusEl) statusEl.textContent = eventSource && eventSource.readyState === EventSource.OPEN ? 'Connected' : 'Disconnected';
+    if (methodEl) {
+      const icon = connectionMethod === 'sse' ? '⚡' : '🔄';
+      methodEl.textContent = connectionMethod === 'sse' ? '⚡ SSE (Real-time)' : '🔄 HTTP Polling';
+    }
+    if (refreshEl) refreshEl.textContent = refreshInterval + ' ms';
+    if (latencyEl) latencyEl.textContent = perf.fetchMs > 0 ? perf.fetchMs.toFixed(1) + ' ms' : '~50 ms';
+    if (settingsSel) settingsSel.value = refreshInterval;
+  }
+
   function initRefreshSelector() {
     const sel = EL('rf-sel');
+    const settingsSel = EL('rf-sel-settings');
     if (!sel) return;
-    refreshInterval = parseInt(sel.value, 10) || 5000;
+    refreshInterval = parseInt(sel.value, 10) || 1000;
+    
+    const updateRefresh = (rate) => {
+      refreshInterval = rate;
+      if (sel) sel.value = rate;
+      if (settingsSel) settingsSel.value = rate;
+      fetch('/api/refresh-rate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ rate })
+      }).catch(() => {});
+      if (connectionMethod === 'http') {
+        scheduleNextFetch(0);
+      }
+      updateSettingsConnInfo();
+    };
+
     sel.addEventListener('change', () => {
-      refreshInterval = parseInt(sel.value, 10) || 5000;
-      clearInterval(intervalId);
-      intervalId = setInterval(fetchData, refreshInterval);
+      const rate = Math.min(30000, Math.max(1, parseInt(sel.value, 10) || 1000));
+      updateRefresh(rate);
     });
+
+    if (settingsSel) {
+      settingsSel.addEventListener('change', () => {
+        if (sel) sel.value = settingsSel.value;
+        const rate = Math.min(30000, Math.max(1, parseInt(settingsSel.value, 10) || 1000));
+        updateRefresh(rate);
+      });
+    }
   }
 
   /* ── Search filters ──────────────────────────────────────────────── */
@@ -835,9 +1069,10 @@
   let selectedSnapshotId = null;
 
   async function loadSnapshots() {
+    showSkeleton('snapshots-tbl-sk', 'snapshots-tbl');
     try {
       const res = await fetch('/api/snapshots');
-      if (!res.ok) return;
+      if (!res.ok) { hideSkeleton('snapshots-tbl-sk', 'snapshots-tbl'); return; }
       const list = await res.json();
       const tbl = EL('snapshots-tbl');
       if (!tbl) return;
@@ -873,17 +1108,22 @@
         td.appendChild(btnCsv);
         if (s.id === selectedSnapshotId) tr.classList.add('selected');
       });
-    } catch {}
+      hideSkeleton('snapshots-tbl-sk', 'snapshots-tbl');
+    } catch {
+      hideSkeleton('snapshots-tbl-sk', 'snapshots-tbl');
+    }
   }
 
   async function saveSnapshot() {
     const labelInput = EL('snap-label');
     const msgEl = EL('snap-msg');
+    const saveBtn = EL('btn-save-snap');
     const label = labelInput ? labelInput.value.trim() : '';
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
     try {
       const res = await fetch('/api/snapshots', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ label })
       });
       if (res.ok) {
@@ -892,9 +1132,13 @@
         if (labelInput) labelInput.value = '';
         if (msgEl) { msgEl.textContent = 'Snapshot saved!'; setTimeout(() => { if (msgEl) msgEl.textContent = ''; }, 2000); }
         loadSnapshots();
+      } else {
+        if (msgEl) msgEl.textContent = 'Error: ' + res.status;
       }
     } catch (e) {
       if (msgEl) msgEl.textContent = 'Error saving snapshot';
+    } finally {
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Snapshot'; }
     }
   }
 
@@ -903,18 +1147,21 @@
     loadSnapshots();
     const resultEl = EL('compare-result');
     if (!resultEl) return;
+    showSkeleton('compare-result-sk', 'compare-result');
     resultEl.innerHTML = '<div class="note">Comparing...</div>';
     try {
-      const res = await fetch(`/api/snapshots/${id}/compare`, { method: 'POST' });
+      const res = await fetch(`/api/snapshots/${id}/compare`, { method: 'POST', headers: authHeaders() });
       if (!res.ok) throw new Error('Failed');
       const data = await res.json();
       if (data.error) {
         resultEl.innerHTML = `<div class="note" style="color:var(--bad)">${esc(data.error)}</div>`;
+        hideSkeleton('compare-result-sk', 'compare-result');
         return;
       }
       const changes = data.changes || [];
       if (changes.length === 0) {
         resultEl.innerHTML = '<div class="note">No changes detected.</div>';
+        hideSkeleton('compare-result-sk', 'compare-result');
         return;
       }
       let html = '<div class="compare-summary"><strong>Snapshot:</strong> ' + esc(data.snapshot_ts) + ' → <strong>Now:</strong> ' + esc(data.current_ts) + '</div>';
@@ -928,8 +1175,10 @@
         html += `<div class="compare-item"><span class="compare-name">${esc(c.name)}</span><span class="compare-diff" style="color:${color}">${diff}${c.old !== undefined ? ' (' + c.old + '→' + c.new + '%)' : ''}</span>${extra}</div>`;
       });
       resultEl.innerHTML = html;
+      hideSkeleton('compare-result-sk', 'compare-result');
     } catch (e) {
       resultEl.innerHTML = '<div class="note" style="color:var(--bad)">Error comparing snapshot</div>';
+      hideSkeleton('compare-result-sk', 'compare-result');
     }
   }
 
@@ -985,14 +1234,15 @@
   async function loadThresholds() {
     try {
       const res = await fetch('/api/config');
+      if (!res.ok) return thresholds || {};
       return await res.json();
-    } catch { return {}; }
+    } catch { return thresholds || {}; }
   }
 
   async function saveThresholds(thresholds) {
     const res = await fetch('/api/config', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(thresholds)
     });
     return res.ok;
@@ -1001,6 +1251,7 @@
   async function renderThresholds() {
     const container = EL('thresholds-form');
     if (!container) return;
+    showSkeleton('thresholds-form-sk', 'thresholds-form');
     const data = await loadThresholds();
     container.innerHTML = THRESHOLD_DEFS.map(t => {
       const val = data[t.key] !== undefined ? data[t.key] : t.default;
@@ -1010,17 +1261,21 @@
         <span class="threshold-unit">${t.unit}</span>
       </div>`;
     }).join('');
+    hideSkeleton('thresholds-form-sk', 'thresholds-form');
   }
 
   async function saveThresholdsFromForm() {
     const container = EL('thresholds-form');
     const msgEl = EL('thresholds-msg');
+    const saveBtn = EL('btn-save-thresholds');
     if (!container) return;
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
     const thresholds = {};
     container.querySelectorAll('input[data-key]').forEach(input => {
       thresholds[input.dataset.key] = parseFloat(input.value) || 0;
     });
     const ok = await saveThresholds(thresholds);
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Thresholds'; }
     if (msgEl) {
       msgEl.textContent = ok ? 'Saved!' : 'Error saving';
       msgEl.style.color = ok ? 'var(--ok)' : 'var(--bad)';
@@ -1048,15 +1303,15 @@
   });
 
   /* ── Boot ────────────────────────────────────────────────────────── */
-  function start() {
+  async function start() {
+    await loadBootstrap();
     initTabs();
     initRefreshSelector();
     initSearchFilters();
     initSnapshots();
     initThresholds();
     initReportButtons();
-    fetchData();
-    intervalId = setInterval(fetchData, refreshInterval);
+    initWebSocket();
   }
 
   document.readyState === 'loading'
