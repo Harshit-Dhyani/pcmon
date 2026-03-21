@@ -88,7 +88,7 @@
 
     const isLoading = data && data._loading;
     if (dbgTl) {
-      const connIcon = connectionMethod === 'websocket' ? '⚡' : '🔄';
+      const connIcon = connectionMethod === 'sse' ? '⚡' : '🔄';
       dbgTl.innerHTML = `<div class="sys-row"><span>Status</span><span style="color:${isLoading ? 'var(--warn)' : 'var(--ok)'}">${isLoading ? 'Collecting data...' : 'Live'}</span></div><div class="sys-row"><span>Connection</span><span>${connIcon} ${connectionMethod}</span></div><div class="sys-row"><span>Refresh</span><span>${refreshInterval}ms</span></div><div class="sys-row"><span>Table Update</span><span>${TABLE_UPDATE_INTERVAL}ms</span></div><div class="sys-row"><span>Data Age</span><span>${cachedData && !isLoading ? ((Date.now() - perfTimer) / 1000).toFixed(1) + 's ago' : '—'}</span></div><div class="sys-row"><span>Processes</span><span>${data ? data.total_procs : '—'}</span></div><div class="sys-row"><span>DOM Nodes</span><span>${document.querySelectorAll('*').length}</span></div>`;
       hideSkeleton('dbg-timeline-sk', 'dbg-timeline');
     }
