@@ -100,6 +100,13 @@ Rules for the `pcmon` workspace. Optimize for correctness, security, production 
 - Background data collection via separate PowerShell process
 - Use file-based caching for cross-process data sharing
 
+### Real-Time Streaming (`/stream`)
+- WebSocket via `AcceptWebSocketAsync` (try first)
+- SSE as fallback with text/event-stream
+- HTTP polling as last resort
+- Fast metrics timer (50ms) broadcasts lightweight data (RAM, CPU, commit, disk)
+- WebSocket broadcast timer sends full data every ~50ms
+
 ## 8. Data Flow Architecture
 
 ### Background Collection Process

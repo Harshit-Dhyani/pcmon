@@ -21,6 +21,9 @@ All notable changes to pcmon will be documented in this file.
 - **Sparklines** - Historical trending visualization
 - **Delta Indicators** - Show metric changes (up/down)
 - **Diagnostic Insights** - Actionable system health explanations
+- **Real-Time Streaming** - WebSocket/SSE/polling fallback chain
+- **Fast Metrics** - Sub-second updates (50ms) for key metrics via real-time stream
+- **Skeleton Loaders** - Loading states on every data fetch cycle
 - **CLI Parameters** - -NoOpen, -ApiOnly, -Debug, -Tray, -Wallpaper, -Help
 
 ### Fixed
@@ -31,6 +34,8 @@ All notable changes to pcmon will be documented in this file.
 - **Empty array errors** - /api/snapshots now handles empty directories gracefully
 - **Cache-first architecture** - Snapshot/compare/report endpoints read from cache file first
 - **Background process crashes** - Fixed param handling, profile paths via temp file
+- **Data display zeros** - Fixed Get-CachedStaticData with -NoProfile and WMI fallbacks
+- **Get-CachedCommandLines logic** - Removed unreachable early return and unused parameter
 
 ### Security
 - XSS protection in dashboard (uses `esc()` function)
@@ -40,12 +45,14 @@ All notable changes to pcmon will be documented in this file.
 - Confirmation header required for process actions
 
 ### Architecture
-- PowerShell-first core
-- Plain HTML/CSS/JS frontend
+- PowerShell-first core (~1450 lines)
+- Plain HTML/CSS/JS frontend (~2900 lines total)
 - Direct .ps1 mode as first-class path
 - Background process for continuous data collection
 - File-based cache for cross-process data sharing
 - Debug mode with `-Debug` flag for verbose logging
+- WebSocket broadcast timer for real-time push
+- Fast metrics timer (50ms) for sub-second updates
 
 ## [0.0.0] - 2026-01-01
 

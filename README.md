@@ -39,7 +39,13 @@ pwsh -File .\pcmon.ps1
 - **Services** — heavy services and startup items
 - **System** — drives, page file, PowerShell profiles
 - **All Processes** — full process list with filtering
-- **Settings** — configurable alert thresholds
+- **Settings** — configurable alert thresholds and connection settings
+
+### Real-Time Updates
+- **WebSocket** — fastest, persistent two-way connection
+- **SSE** — Server-Sent Events, real-time push
+- **HTTP Polling** — fallback with configurable refresh rate
+- **Fast Metrics** — sub-second updates (50ms) for key metrics via WebSocket/SSE
 
 ### Process Actions
 - **Kill** — terminate a process (with confirmation)
@@ -82,6 +88,7 @@ Customizable thresholds for:
 | `/data` | GET | Live system data JSON |
 | `/dashboard.js` | GET | JavaScript |
 | `/dashboard.css` | GET | Styles |
+| `/stream` | GET | WebSocket or SSE real-time stream |
 | `/api/process/{pid}/kill` | POST | Kill process |
 | `/api/process/{pid}/suspend` | POST | Suspend process |
 | `/api/process/{pid}/resume` | POST | Resume process |
@@ -104,13 +111,15 @@ Customizable thresholds for:
 
 ```
 pcmon/
-  pcmon.ps1          # main entry point
+  pcmon.ps1          # main entry point (~1450 lines)
   config.json        # saved alert thresholds (created on first use)
   snapshots/         # saved snapshots (created on first use)
   web/
-    index.html      # dashboard
-    dashboard.js    # UI logic
-    dashboard.css   # styles
+    index.html      # dashboard HTML (~650 lines)
+    dashboard.js    # UI logic (~1440 lines)
+    dashboard.css   # styles (~880 lines)
+  wallpaper/
+    index.html      # live wallpaper
 ```
 
 ## Architecture
@@ -120,6 +129,12 @@ pcmon/
 - Writes to temp JSON cache file every ~3.5s
 - Main server reads from cache for fast response
 - Falls back to synchronous collection if background fails
+
+### Real-Time Stream (`/stream`)
+- **WebSocket** — Try first via `AcceptWebSocketAsync`. Broadcasts full data every ~50ms when clients connected
+- **SSE** — Falls back to Server-Sent Events. Sends full data every ~50ms
+- **Fast Metrics** — Separate 50ms timer sends lightweight metrics (RAM, CPU, commit, disk) for sub-second updates
+- **HTTP Polling** — Last resort fallback to `/data` endpoint with configurable interval
 
 ### Refresh Rate
 - Configurable from Settings tab (1s - 30s)
@@ -147,6 +162,7 @@ pcmon/
 - Input validation on all API endpoints
 - No shell-string execution
 - XSS protection in dashboard (uses `esc()` function)
+- All user data escaped before innerHTML
 
 ## License
 

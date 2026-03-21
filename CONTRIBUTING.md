@@ -23,11 +23,13 @@ pcmon is a **local-first Windows diagnostics tool** with these principles:
 
 ```
 pcmon/
-  pcmon.ps1          # Main entry - data collection, HTTP server
+  pcmon.ps1          # Main entry - data collection, HTTP server (~1450 lines)
   web/
-    index.html       # Dashboard HTML
-    dashboard.js    # Dashboard JavaScript
-    dashboard.css   # Dashboard styles
+    index.html       # Dashboard HTML (~650 lines)
+    dashboard.js    # Dashboard JavaScript (~1440 lines)
+    dashboard.css   # Dashboard styles (~880 lines)
+  wallpaper/
+    index.html       # Live wallpaper HTML
 ```
 
 ## Adding Features
@@ -38,14 +40,21 @@ pcmon/
 - Add button in index.html
 - Test with protected processes
 
+### Real-Time Stream
+- `/stream` endpoint handles both WebSocket (via AcceptWebSocketAsync) and SSE
+- `Broadcast-WebSocketData` function sends to all connected clients
+- Fast metrics timer (50ms) sends lightweight updates
+- Check connection method via `$script:ConnectionMethod`
+
 ### Insights
-- Modify insight generation in Get-LiveData function
+- Modify insight generation in `_CollectLiveData` function
 - Keep explanations actionable
 
 ### Dashboard UI
 - Add tab in index.html with `data-page` attribute
 - Add page section with `id="pg-{name}"`
 - Add rendering logic in dashboard.js
+- Use `esc()` for all user data in innerHTML
 
 ## Testing
 
