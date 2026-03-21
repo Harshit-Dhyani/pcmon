@@ -66,8 +66,10 @@ $script:DebugMode = $Debug
 $script:LiveDataCache = $null
 $script:LiveDataCacheExpiry = [DateTime]::MinValue
 $script:LiveDataCollectionStatus = "idle"
-$script:WSClients = @()
 $script:ConnectionMethod = "polling"
+$script:WSClients = [System.Collections.Generic.List[object]]::new()
+$script:WSLastSend = [DateTime]::MinValue
+$script:WSBroadcastInterval = 50
 $SNAPSHOTS_DIR = Join-Path $SCRIPT_DIR "snapshots"
 if (-not (Test-Path $SNAPSHOTS_DIR)) { New-Item -ItemType Directory -Path $SNAPSHOTS_DIR -Force | Out-Null }
 $cacheFile = Join-Path $env:TEMP "pcmon_live_cache.json"
@@ -323,21 +325,23 @@ function Resume-ProcessById {
     }
 }
 
-function Send-WebSocketData($data) {
+function Broadcast-WebSocketData($data) {
     if ($script:WSClients.Count -eq 0) { return }
+    $now = Get-Date
+    if (($now - $script:WSLastSend).TotalMilliseconds -lt $script:WSBroadcastInterval) { return }
+    $script:WSLastSend = $now
     try {
         $json = $data | ConvertTo-Json -Depth 20 -Compress
         $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
-        $dead = @()
+        $dead = [System.Collections.Generic.List[object]]::new()
         foreach ($ws in $script:WSClients) {
             try {
                 if ($ws.State -eq 'Open') {
                     $ws.SendAsync([ArraySegment[byte]]$bytes, 'Text', $true, [Threading.CancellationToken]::None)
-                } else { $dead += $ws }
-            } catch { $dead += $ws }
+                } else { $dead.Add($ws) }
+            } catch { $dead.Add($ws) }
         }
         foreach ($d in $dead) { try { $script:WSClients.Remove($d) } catch {} }
-        if ($script:WSClients.Count -eq 0) { $script:ConnectionMethod = "polling" }
     } catch {}
 }
 
@@ -889,7 +893,6 @@ try {
                 cached_drives_count = if ($script:CachedStatic.Drives) { $script:CachedStatic.Drives.Count } else { 0 }
                 commandlines_cached = $script:CommandLines.Count
                 static_files = $script:StaticFiles.Keys
-                ws_clients = $script:WSClients.Count
                 connection_method = $script:ConnectionMethod
                 broadcast_interval_ms = $script:BroadcastInterval
             } | ConvertTo-Json -Compress
@@ -1289,31 +1292,51 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
             Send-Response $response $buffer "application/json"
         }
         elseif ($path -eq "/stream" -and $request.HttpMethod -eq "GET") {
-            try {
-                $response.ContentType = "text/event-stream"
-                $response.Headers.Add("Cache-Control", "no-cache")
-                $response.Headers.Add("Connection", "keep-alive")
-                $response.Headers.Add("Access-Control-Allow-Origin", "*")
-                $script:ConnectionMethod = "sse"
-                while ($listener.IsListening -and -not $script:shuttingDown) {
-                    try {
-                        if (Test-Path $cacheFile) {
-                            $fi = Get-Item $cacheFile -ErrorAction SilentlyContinue
-                            if ($fi) {
-                                $data = Get-Content $cacheFile -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json -ErrorAction SilentlyContinue
-                                if ($data) {
-                                    $json = $data | ConvertTo-Json -Depth 20 -Compress
-                                    $payload = [System.Text.Encoding]::UTF8.GetBytes("data: $json`n`n")
-                                    $response.OutputStream.Write($payload, 0, $payload.Length)
-                                    $response.OutputStream.Flush()
+            $upgrade = $request.Headers.Get("Upgrade")
+            $secWebSocketKey = $request.Headers.Get("Sec-WebSocket-Key")
+            
+            if ($secWebSocketKey) {
+                try {
+                    $wsContext = $context.AcceptWebSocketAsync($null)
+                    if ($wsContext.Result) {
+                        $script:ConnectionMethod = "websocket"
+                        $script:WSClients.Add($wsContext.Result.WebSocket)
+                        $buffer = [byte[]]::new(4096)
+                        while ($wsContext.Result.WebSocket.State -eq 'Open' -and -not $script:shuttingDown) {
+                            Start-Sleep -Milliseconds 50
+                        }
+                        $script:WSClients.Remove($wsContext.Result.WebSocket)
+                    }
+                } catch {
+                    $script:ConnectionMethod = "sse"
+                }
+            } else {
+                try {
+                    $response.ContentType = "text/event-stream"
+                    $response.Headers.Add("Cache-Control", "no-cache")
+                    $response.Headers.Add("Connection", "keep-alive")
+                    $response.Headers.Add("Access-Control-Allow-Origin", "*")
+                    $script:ConnectionMethod = "sse"
+                    while ($listener.IsListening -and -not $script:shuttingDown) {
+                        try {
+                            if (Test-Path $cacheFile) {
+                                $fi = Get-Item $cacheFile -ErrorAction SilentlyContinue
+                                if ($fi) {
+                                    $data = Get-Content $cacheFile -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json -ErrorAction SilentlyContinue
+                                    if ($data) {
+                                        $json = $data | ConvertTo-Json -Depth 20 -Compress
+                                        $payload = [System.Text.Encoding]::UTF8.GetBytes("data: $json`n`n")
+                                        $response.OutputStream.Write($payload, 0, $payload.Length)
+                                        $response.OutputStream.Flush()
+                                    }
                                 }
                             }
-                        }
-                        Start-Sleep -Milliseconds 50
-                    } catch { break }
-                }
-            } catch {}
-            $response.StatusCode = 200
+                            Start-Sleep -Milliseconds 50
+                        } catch { break }
+                    }
+                } catch {}
+                $response.StatusCode = 200
+            }
             $response.Close()
         }
         elseif ($path -eq "/" -or $path -eq "/index.html") {
