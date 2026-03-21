@@ -101,9 +101,10 @@
     }
 
     if (dbgCache) {
-      const connStatus = connectionMethod === 'sse' ? 'SSE Connected' : 'HTTP Polling';
-      const connColor = connectionMethod === 'sse' ? 'var(--ok)' : 'var(--warn)';
-      dbgCache.innerHTML = `<div class="sys-row"><span>Status</span><span style="color:${isLoading || pollInFlight ? 'var(--warn)' : 'var(--ok)'}">${isLoading || pollInFlight ? 'Collecting...' : 'Ready'}</span></div><div class="sys-row"><span>Connection</span><span style="color:${connColor}">${connStatus}</span></div><div class="sys-row"><span>Refresh</span><span>${refreshInterval}ms</span></div>`;
+      const connIcons = { websocket: '⚡', sse: '🔌', http: '🔄' };
+      const connLabels = { websocket: 'WS Connected', sse: 'SSE Connected', http: 'HTTP Polling' };
+      const connColor = connectionMethod === 'websocket' || connectionMethod === 'sse' ? 'var(--ok)' : 'var(--warn)';
+      dbgCache.innerHTML = `<div class="sys-row"><span>Status</span><span style="color:${isLoading || pollInFlight ? 'var(--warn)' : 'var(--ok)'}">${isLoading || pollInFlight ? 'Collecting...' : 'Ready'}</span></div><div class="sys-row"><span>Connection</span><span style="color:${connColor}">${connIcons[connectionMethod] || '?'} ${connLabels[connectionMethod] || connectionMethod}</span></div><div class="sys-row"><span>Refresh</span><span>${refreshInterval}ms</span></div>`;
       hideSkeleton('dbg-cache-sk', 'dbg-cache');
     }
 
@@ -356,10 +357,62 @@
     } catch {}
   }
 
-  function initWebSocket() {
+  let wsSocket = null;
+
+  function tryWebSocket() {
+    if (wsSocket) {
+      wsSocket.close();
+      wsSocket = null;
+    }
+    try {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      wsSocket = new WebSocket(protocol + '//' + window.location.host + '/stream');
+      wsSocket.onopen = () => {
+        connectionMethod = 'websocket';
+        wsReconnectDelay = 1000;
+        if (eventSource) { eventSource.close(); eventSource = null; }
+        if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+        pollInFlight = false;
+        updateSettingsConnInfo();
+      };
+      wsSocket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          const renderStart = performance.now();
+          renderAll(data);
+          perf.renderMs = performance.now() - renderStart;
+          perf.cycleMs = perf.renderMs;
+          perfTimer = Date.now();
+          pollInFlight = false;
+          cachedData = data;
+          updateDebugPanel(data);
+          updateSettingsConnInfo();
+        } catch (e) {}
+      };
+      wsSocket.onerror = () => {
+        connectionMethod = 'sse';
+        trySSE();
+      };
+      wsSocket.onclose = () => {
+        if (connectionMethod === 'websocket') {
+          connectionMethod = 'sse';
+          trySSE();
+        }
+      };
+    } catch (e) {
+      connectionMethod = 'sse';
+      trySSE();
+    }
+  }
+
+  function trySSE() {
     if (eventSource) {
       eventSource.close();
       eventSource = null;
+    }
+    if (wsSocket) {
+      wsSocket.close();
+      wsSocket = null;
     }
     try {
       eventSource = new EventSource('/stream');
@@ -388,9 +441,6 @@
         connectionMethod = 'http';
         eventSource.close();
         eventSource = null;
-        setTimeout(() => {
-          initWebSocket();
-        }, wsReconnectDelay);
         wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, wsMaxReconnectDelay);
         startHTTPPolling();
       };
@@ -398,6 +448,10 @@
       connectionMethod = 'http';
       startHTTPPolling();
     }
+  }
+
+  function initStream() {
+    tryWebSocket();
   }
 
   function startHTTPPolling() {
@@ -1311,7 +1365,7 @@
     initSnapshots();
     initThresholds();
     initReportButtons();
-    initWebSocket();
+    initStream();
   }
 
   document.readyState === 'loading'
