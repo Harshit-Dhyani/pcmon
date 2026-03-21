@@ -17,7 +17,8 @@ Thumbs.db
 .vscode/
 
 # Build output
-dist/
+web/dist/
+web/dashboard.js
 build/
 
 # Lock files (optional - uncomment if you want to track)

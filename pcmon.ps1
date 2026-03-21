@@ -613,9 +613,14 @@ $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://${HOSTNAME}:$Port/")
 $listener.TimeoutManager.RequestQueue = New-Object System.TimeSpan(0, 2, 0)
 
-foreach ($f in @('index.html', 'dashboard.css', 'dashboard.js')) {
-    $fp = Join-Path $WEB_DIR $f
-    if (Test-Path $fp) { $script:StaticFiles[$f] = @{ data = [System.IO.File]::ReadAllBytes($fp); type = if ($f -like '*.css') { 'text/css' } elseif ($f -like '*.js') { 'application/javascript' } else { 'text/html; charset=utf-8' } } }
+$DIST_INDEX = Join-Path $WEB_DIR "dist\index.html"
+if (Test-Path $DIST_INDEX) {
+    $script:StaticFiles['index.html'] = @{ data = [System.IO.File]::ReadAllBytes($DIST_INDEX); type = 'text/html; charset=utf-8' }
+} else {
+    foreach ($f in @('index.html', 'dashboard.css', 'dashboard.js')) {
+        $fp = Join-Path $WEB_DIR $f
+        if (Test-Path $fp) { $script:StaticFiles[$f] = @{ data = [System.IO.File]::ReadAllBytes($fp); type = if ($f -like '*.css') { 'text/css' } elseif ($f -like '*.js') { 'application/javascript' } else { 'text/html; charset=utf-8' } } }
+    }
 }
 $wallpaperFile = Join-Path $SCRIPT_DIR "wallpaper\index.html"
 if (Test-Path $wallpaperFile) { $script:StaticFiles['wallpaper.html'] = @{ data = [System.IO.File]::ReadAllBytes($wallpaperFile); type = 'text/html; charset=utf-8' } }
