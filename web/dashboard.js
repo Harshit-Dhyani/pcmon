@@ -3,9 +3,9 @@
 
   /* ── Config ──────────────────────────────────────────────────────── */
   const HISTORY_SIZE = 40;
-  const TABLE_UPDATE_INTERVAL = 10000;
+  const TABLE_UPDATE_INTERVAL = 4000;
   const DEFAULT_THRESHOLDS = { ram_pct: 85, cpu_pct: 90, commit_pct: 80, pages_sec: 1000, non_paged_mb: 1500, disk_pct: 90 };
-  let refreshInterval = 1000;
+  let refreshInterval = 500;
   let pollTimer = null;
   let pollInFlight = false;
   let firstLoad = true;
@@ -344,7 +344,7 @@
 
   function scheduleNextFetch(delay = refreshInterval) {
     clearTimeout(pollTimer);
-    pollTimer = setTimeout(fetchData, Math.max(250, delay));
+    pollTimer = setTimeout(fetchData, Math.max(500, delay));
   }
 
   async function loadBootstrap() {
@@ -406,13 +406,17 @@
     if (history.cpu.length > HISTORY_SIZE) history.cpu.shift();
     if (history.disk.length > HISTORY_SIZE) history.disk.shift();
     
-    drawSparkline('spk-ram', history.ram, '--' + ramStatus);
-    drawSparkline('spk-cpu', history.cpu, '--' + cpuStatus);
-    drawSparkline('spk-cpu2', history.cpu, '--' + cpuStatus);
+    const now = Date.now();
+    if (!handleFastUpdate._lastSparkline || now - handleFastUpdate._lastSparkline > 1000) {
+      handleFastUpdate._lastSparkline = now;
+      drawSparkline('spk-ram', history.ram, '--' + ramStatus);
+      drawSparkline('spk-cpu', history.cpu, '--' + cpuStatus);
+      drawSparkline('spk-cpu2', history.cpu, '--' + cpuStatus);
+    }
     
     if (EL('ts')) EL('ts').textContent = data.ts || '--:--:--';
     
-    perfTimer = Date.now();
+    perfTimer = now;
     cachedData = cachedData || {};
     cachedData.ts = data.ts;
   }
@@ -1136,7 +1140,7 @@
     const sel = EL('rf-sel');
     const settingsSel = EL('rf-sel-settings');
     if (!sel) return;
-    refreshInterval = parseInt(sel.value, 10) || 1000;
+    refreshInterval = parseInt(sel.value, 10) || 500;
     
     const updateRefresh = (rate) => {
       refreshInterval = rate;
@@ -1154,14 +1158,14 @@
     };
 
     sel.addEventListener('change', () => {
-      const rate = Math.min(30000, Math.max(1, parseInt(sel.value, 10) || 1000));
+      const rate = Math.min(10000, Math.max(500, parseInt(sel.value, 10) || 500));
       updateRefresh(rate);
     });
 
     if (settingsSel) {
       settingsSel.addEventListener('change', () => {
         if (sel) sel.value = settingsSel.value;
-        const rate = Math.min(30000, Math.max(1, parseInt(settingsSel.value, 10) || 1000));
+        const rate = Math.min(10000, Math.max(500, parseInt(settingsSel.value, 10) || 500));
         updateRefresh(rate);
       });
     }

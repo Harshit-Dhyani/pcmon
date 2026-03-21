@@ -28,11 +28,8 @@
     </div>
     <span class="rf-lbl">Refresh</span>
     <select class="rf-sel" id="rf-sel">
-      <option value="50">50 ms</option>
-      <option value="100">100 ms</option>
-      <option value="250">250 ms</option>
-      <option value="500">500 ms</option>
-      <option value="1000" selected>1 s</option>
+      <option value="500" selected>500 ms</option>
+      <option value="1000">1 s</option>
       <option value="2000">2 s</option>
       <option value="5000">5 s</option>
       <option value="10000">10 s</option>
@@ -612,20 +609,18 @@
         <div style="margin-top:12px">
           <label class="sbar" style="display:inline-block;margin-right:8px">Refresh Rate</label>
           <select class="rf-sel" id="rf-sel-settings">
-            <option value="50">50 ms</option>
-            <option value="100">100 ms</option>
-            <option value="250">250 ms</option>
-            <option value="500">500 ms</option>
-            <option value="1000" selected>1 s</option>
+            <option value="500" selected>500 ms</option>
+            <option value="1000">1 s</option>
             <option value="2000">2 s</option>
             <option value="5000">5 s</option>
             <option value="10000">10 s</option>
           </select>
         </div>
         <div class="note" style="margin-top:8px">
-          <span>⚡ WebSocket</span> = Fastest, persistent connection<br>
-          <span>🔌 SSE</span> = Server-Sent Events, fast push<br>
-          <span>🔄 HTTP Polling</span> = Fallback, higher latency
+          <span>⚡ WebSocket</span> = Real-time streaming<br>
+          <span>🔌 SSE</span> = Server-Sent Events<br>
+          <span>🔄 HTTP</span> = Fallback polling<br>
+          <span style="font-size:0.9em;color:var(--dim)">Fast counters: ~500ms | Tables: 2-4s | Static: 30s+</span>
         </div>
       </div>
     </div>
