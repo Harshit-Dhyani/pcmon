@@ -55,10 +55,18 @@ Test your changes:
 # Then visit http://localhost:9876
 ```
 
+Test with debug mode:
+```powershell
+.\pcmon.ps1 -Debug
+# Shows detailed background collection timing
+# Shows client disconnect errors gracefully
+```
+
 Test specific features:
 - Process actions - try killing a notepad process
 - Snapshots - save and compare
 - Config - change thresholds in Settings tab
+- Refresh rate - change to 1s and verify fast updates
 
 ## Guidelines
 

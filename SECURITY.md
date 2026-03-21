@@ -13,7 +13,7 @@ If you find a security vulnerability, please report it responsibly. Do not open 
 ## Security Practices
 
 ### Process Actions
-- All process kill/suspend/resume actions require user confirmation
+- All process kill/suspend/resume actions require confirmation header (`X-PCMON-Confirm: 1`)
 - Protected system processes (System, lsass, csrss, etc.) cannot be terminated
 - Process IDs are validated as integers only
 - No shell-string execution - uses native PowerShell cmdlets

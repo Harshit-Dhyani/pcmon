@@ -46,6 +46,7 @@ Rules for the `pcmon` workspace. Optimize for correctness, security, production 
 ### Run Modes
 - Direct: `.\pcmon.ps1`
 - API-only: `-NoOpen` or `-ApiOnly`
+- Debug: `-Debug` (enables verbose logging)
 - Custom port: `-Port 8080`
 - Tray: `-Tray`
 - Wallpaper: `-Wallpaper`
@@ -66,8 +67,12 @@ Rules for the `pcmon` workspace. Optimize for correctness, security, production 
 - Never use `shell: true` or shell-string execution
 - Prevent path traversal in snapshot/export/compare flows
 - Block dangerous process actions on protected system processes
-- Require confirmation for process kill/suspend/resume
-- XSS protection in dashboard
+- Require confirmation header (`X-PCMON-Confirm: 1`) for process kill/suspend/resume
+- Validate HTTP method (GET/POST) on all endpoints
+- Escape all user data in innerHTML (use `esc()` function)
+- Validate numeric types for threshold configs
+- Use try-catch around all file operations
+- Handle null/undefined values explicitly
 
 ## 6. Code Quality Standards
 
@@ -78,6 +83,12 @@ Rules for the `pcmon` workspace. Optimize for correctness, security, production 
 - Add short intent comments for non-trivial functions
 - Keep README and runtime behavior aligned
 - Verify changes before claiming completion
+- **Never use undefined variables** - declare before use
+- **Never duplicate variable declarations** - results in overwrites
+- **Never use non-existent helper functions** - will cause runtime errors
+- **Always add error handling** around file I/O, external processes, HTTP listeners
+- **Always validate endpoint matches** before processing requests
+- **Never assume JSON serialization depth is sufficient** - use `-Depth 20` for complex objects
 
 ## 7. Architecture Rules
 
@@ -86,17 +97,85 @@ Rules for the `pcmon` workspace. Optimize for correctness, security, production 
 - Plain HTML/CSS/JS for UI
 - Separate concerns: data collection, action handling, HTTP/API, dashboard UI
 - Do not merge unrelated concerns into one file
+- Background data collection via separate PowerShell process
+- Use file-based caching for cross-process data sharing
 
-## 8. Verification Before Done
+## 8. Data Flow Architecture
 
-- Local script still starts
-- Dashboard loads correctly
-- Data endpoint works
-- Changed tabs/views render without breakage
-- Action endpoints behave as expected
-- Snapshot/compare/export flows work if touched
+### Background Collection Process
+- Separate pwsh/powershell process for continuous data collection
+- Writes to temp JSON file every cycle
+- Falls back to main process if background fails
+- Respects configurable refresh rate from file
 
-## 9. Non-Negotiables
+### Main Server Process
+- HttpListener for HTTP server
+- Reads cached data from file for `/data` endpoint
+- Falls back to synchronous collection if cache unavailable
+- Handles all API endpoints (snapshots, process actions, config)
+
+### Refresh Rate System
+- UI sends refresh rate to `/api/refresh-rate` (min 1000ms)
+- Backend saves to temp file
+- Background process reads rate file each cycle
+- Sync fallback respects same minimum
+
+## 9. Common Bugs to Avoid
+
+### Variable Issues
+- Never reference variables before declaration
+- Never declare same variable twice (last wins)
+- Remove unused variable declarations
+
+### Null/Undefined Handling
+- Always check `$null` before accessing properties
+- Use `[DateTime]::MinValue` for cache expiry sentinel values
+- Handle empty collections explicitly (use `@()` to ensure array)
+
+### Background Process
+- Pass file paths as arguments, not inline
+- Use proper quoting for paths with spaces
+- Add error handling for Start-Process failures
+- Graceful degradation if background process unavailable
+- **Use -File parameter with separate array arguments** - not -Command with string
+- **Handle file lock conflicts** - use retry loop with `[System.IO.File]::Open()` exclusive mode
+
+### HTTP Server
+- Wrap `GetContext()` in try-catch
+- Validate HTTP method before processing
+- **Always wrap OutputStream.Write in try-catch** - client disconnects cause "network name no longer available"
+- Handle malformed requests gracefully
+
+### JSON Serialization
+- **Use -Depth 20** for objects with nested structures (processes, GPU, disks)
+- **Never use Depth 5** - it truncates nested data and causes "JSON truncated" warnings
+
+### Caching
+- Define cache file path before functions that use it
+- Use single source of truth for shared paths
+- Check file exists before read operations
+
+## 10. Debug Mode
+
+- Use `-Debug` flag to enable verbose logging
+- Debug mode shows background collection timing
+- Debug mode shows client disconnect errors gracefully
+
+## 11. Verification Checklist
+
+Before claiming completion:
+- [ ] Script starts without errors
+- [ ] Dashboard loads in browser
+- [ ] Data endpoint returns valid JSON
+- [ ] All tabs render without errors
+- [ ] Process actions work (kill/suspend/resume)
+- [ ] Snapshot save/compare/export works
+- [ ] Settings (thresholds) persist
+- [ ] No 404 errors in browser console
+- [ ] No unhandled exceptions in PowerShell
+- [ ] Memory stable over extended use
+
+## 12. Non-Negotiables
 
 - Never commit secrets, tokens, or debug credentials
 - Never fake metrics or verification

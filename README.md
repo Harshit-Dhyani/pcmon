@@ -17,10 +17,10 @@ pwsh -File .\pcmon.ps1
 ## Usage
 
 ```powershell
-.\pcmon.ps1              # defaults: opens browser, 2s refresh
+.\pcmon.ps1              # defaults: opens browser, 4s refresh
 .\pcmon.ps1 -NoOpen      # API-only mode, no browser auto-open
 .\pcmon.ps1 -ApiOnly     # same as -NoOpen
-.\pcmon.ps1 -Port 8080   # custom port
+.\pcmon.ps1 -Debug       # enable verbose debug logging
 .\pcmon.ps1 -Tray        # system tray mode (runs in background)
 .\pcmon.ps1 -Wallpaper   # live wallpaper mode
 .\pcmon.ps1 -Help        # show all options
@@ -85,14 +85,20 @@ Customizable thresholds for:
 | `/api/process/{pid}/kill` | POST | Kill process |
 | `/api/process/{pid}/suspend` | POST | Suspend process |
 | `/api/process/{pid}/resume` | POST | Resume process |
-| `/api/snapshots` | GET/POST | List/save snapshots |
+| `/api/snapshots` | GET | List snapshots |
+| `/api/snapshots` | POST | Save snapshot |
 | `/api/snapshots/{id}/compare` | POST | Compare snapshot |
 | `/api/snapshots/{id}/export` | GET | Export JSON |
 | `/api/snapshots/{id}/export.csv` | GET | Export CSV |
 | `/api/config` | GET/POST | Alert thresholds |
+| `/api/refresh-rate` | POST | Set refresh rate (ms) |
 | `/api/report` | GET | Printable report |
 | `/api/report/download` | GET | Download report |
-| `/wallpaper` | GET | Live wallpaper |
+| `/health` | GET | Server health status |
+| `/errors` | GET | Error log |
+| `/debug` | GET | Debug info |
+| `/logs` | GET | Plain text logs |
+| `/wallpaper.html` | GET | Live wallpaper |
 
 ## File Layout
 
@@ -101,13 +107,24 @@ pcmon/
   pcmon.ps1          # main entry point
   config.json        # saved alert thresholds (created on first use)
   snapshots/         # saved snapshots (created on first use)
-  bin/
-    pcmon.ps1       # CLI wrapper shim
   web/
     index.html      # dashboard
     dashboard.js    # UI logic
     dashboard.css   # styles
 ```
+
+## Architecture
+
+### Background Data Collection
+- Separate PowerShell process collects data continuously
+- Writes to temp JSON cache file every ~3.5s
+- Main server reads from cache for fast response
+- Falls back to synchronous collection if background fails
+
+### Refresh Rate
+- Configurable from Settings tab (1s - 30s)
+- Default: 4 seconds
+- Minimum: 1 second (500ms minimum enforced server-side)
 
 ## Requirements
 
@@ -125,11 +142,11 @@ pcmon/
 
 ## Security
 
-- Process actions require confirmation
+- Process actions require confirmation header (`X-PCMON-Confirm: 1`)
 - Protected system processes cannot be terminated
 - Input validation on all API endpoints
 - No shell-string execution
-- XSS protection in dashboard
+- XSS protection in dashboard (uses `esc()` function)
 
 ## License
 
