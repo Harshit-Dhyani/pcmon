@@ -357,6 +357,66 @@
     } catch {}
   }
 
+  function handleFastUpdate(data) {
+    if (!data._fast) return;
+    
+    if (cachedData) {
+      cachedData.ram_pct = data.ram_pct;
+      cachedData.ram_avail_mb = data.ram_avail_mb;
+      cachedData.commit_pct = data.commit_pct;
+      cachedData.cpu_pct = data.cpu_pct;
+      cachedData.disk_pct = data.disk_pct;
+    }
+    
+    const ramPct = data.ram_pct || 0;
+    const cpuPct = data.cpu_pct || 0;
+    const diskPct = data.disk_pct || 0;
+    const ramStatus = ramPct > thresholds.ram_pct ? 'bad' : ramPct > thresholds.ram_pct * 0.8 ? 'warn' : 'ok';
+    const cpuStatus = cpuPct > thresholds.cpu_pct ? 'bad' : cpuPct > thresholds.cpu_pct * 0.8 ? 'warn' : 'ok';
+    
+    TXT(EL('sv-ram'), ramPct.toFixed(1) + '%');
+    TXT(EL('ss-ram'), data.ram_avail_mb + ' MB avail');
+    COL(EL('sf-ram'), ramPct);
+    if (EL('sb-ram')) EL('sb-ram').textContent = ramPct > thresholds.ram_pct ? 'HIGH' : '';
+    
+    TXT(EL('sv-cpu'), cpuPct.toFixed(1) + '%');
+    COL(EL('sf-cpu'), cpuPct);
+    if (EL('sb-cpu')) EL('sb-cpu').textContent = cpuPct > thresholds.cpu_pct ? 'HIGH' : '';
+    
+    if (EL('sv-disk')) {
+      TXT(EL('sv-disk'), diskPct.toFixed(1) + '%');
+      COL(EL('sf-disk'), diskPct);
+    }
+    
+    if (EL('r-sv-ram')) {
+      TXT(EL('r-sv-ram'), ramPct.toFixed(1) + '%');
+      TXT(EL('r-avail'), data.ram_avail_mb + ' MB');
+      COL(EL('r-sf-ram'), ramPct);
+    }
+    
+    if (EL('c-sv-cpu')) {
+      TXT(EL('c-sv-cpu'), cpuPct.toFixed(1) + '%');
+      COL(EL('c-sf-cpu'), cpuPct);
+    }
+    
+    history.ram.push(ramPct);
+    history.cpu.push(cpuPct);
+    history.disk.push(diskPct);
+    if (history.ram.length > HISTORY_SIZE) history.ram.shift();
+    if (history.cpu.length > HISTORY_SIZE) history.cpu.shift();
+    if (history.disk.length > HISTORY_SIZE) history.disk.shift();
+    
+    drawSparkline('spk-ram', history.ram, '--' + ramStatus);
+    drawSparkline('spk-cpu', history.cpu, '--' + cpuStatus);
+    drawSparkline('spk-cpu2', history.cpu, '--' + cpuStatus);
+    
+    if (EL('ts')) EL('ts').textContent = data.ts || '--:--:--';
+    
+    perfTimer = Date.now();
+    cachedData = cachedData || {};
+    cachedData.ts = data.ts;
+  }
+
   let wsSocket = null;
 
   function tryWebSocket() {
@@ -378,15 +438,19 @@
       wsSocket.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          const renderStart = performance.now();
-          renderAll(data);
-          perf.renderMs = performance.now() - renderStart;
-          perf.cycleMs = perf.renderMs;
-          perfTimer = Date.now();
-          pollInFlight = false;
-          cachedData = data;
-          updateDebugPanel(data);
-          updateSettingsConnInfo();
+          if (data._fast) {
+            handleFastUpdate(data);
+          } else {
+            const renderStart = performance.now();
+            renderAll(data);
+            perf.renderMs = performance.now() - renderStart;
+            perf.cycleMs = perf.renderMs;
+            perfTimer = Date.now();
+            pollInFlight = false;
+            cachedData = data;
+            updateDebugPanel(data);
+            updateSettingsConnInfo();
+          }
         } catch (e) {}
       };
       wsSocket.onerror = () => {
@@ -426,15 +490,18 @@
       eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          const renderStart = performance.now();
-          renderAll(data);
-          perf.renderMs = performance.now() - renderStart;
-          perf.cycleMs = perf.renderMs;
-          perfTimer = Date.now();
-          pollInFlight = false;
-          cachedData = data;
-          updateDebugPanel(data);
-          updateSettingsConnInfo();
+          if (data._fast) {
+            handleFastUpdate(data);
+          } else {
+            const renderStart = performance.now();
+            renderAll(data);
+            perf.renderMs = performance.now() - renderStart;
+            perf.cycleMs = perf.renderMs;
+            perfTimer = Date.now();
+            pollInFlight = false;
+            cachedData = data;
+            updateDebugPanel(data);
+            updateSettingsConnInfo();
         } catch (e) {}
       };
       eventSource.onerror = () => {

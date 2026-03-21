@@ -581,6 +581,7 @@ Write-Host ""
 Write-Host "  =========================================" -ForegroundColor DarkGray
 Write-Host "   $([char]0x1B)[92mPCMON v1.0$([char]0x1B)[0m  $([char]0x1B)[96m$modeLabel$([char]0x1B)[0m $trayLabel $wallpaperLabel" -NoNewline; Write-Host ""
 Write-Host "   $([char]0x1B)[2m  Local-first Windows system monitor$([char]0x1B)[0m"
+Write-Host "   $([char]0x1B)[36m  ⚡ WebSocket  🔌 SSE  🔄 HTTP$([char]0x1B)[0m"
 Write-Host "  =========================================" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host ""
@@ -595,6 +596,7 @@ Write-Host "  $base/data"
 Write-Host "  $base/api/snapshots"
 Write-Host "  $base/api/report"
 Write-Host "  $base/api/report/download"
+Write-Host "  $base/stream $([char]0x1B)[36m(WebSocket/SSE)$([char]0x1B)[0m"
 Write-Host "  $base/health"
 Write-Host "  $base/errors"
 Write-Host "  $base/debug"
@@ -619,6 +621,71 @@ $wallpaperFile = Join-Path $SCRIPT_DIR "wallpaper\index.html"
 if (Test-Path $wallpaperFile) { $script:StaticFiles['wallpaper.html'] = @{ data = [System.IO.File]::ReadAllBytes($wallpaperFile); type = 'text/html; charset=utf-8' } }
 
 $listener.Start()
+
+$wsBroadcastTimer = New-Object System.Timers.Timer
+$wsBroadcastTimer.Interval = $script:WSBroadcastInterval
+$wsBroadcastTimer.AutoReset = $true
+Register-ObjectEvent -InputObject $wsBroadcastTimer -EventName Elapsed -Action {
+    if ($script:WSClients.Count -eq 0) { return }
+    try {
+        if (Test-Path $cacheFile) {
+            $fi = Get-Item $cacheFile -ErrorAction SilentlyContinue
+            if ($fi) {
+                $data = Get-Content $cacheFile -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json -ErrorAction SilentlyContinue
+                if ($data) {
+                    Broadcast-WebSocketData $data
+                }
+            }
+        }
+    } catch {}
+} | Out-Null
+$wsBroadcastTimer.Start()
+
+$script:LastFastUpdate = [DateTime]::MinValue
+$script:FastUpdateInterval = 50
+
+function Get-FastMetrics {
+    try {
+        $counters = Get-Counter '\Memory\Available MBytes','\Memory\Committed Bytes','\Memory\Commit Limit','\Processor(_Total)\% Processor Time','\PhysicalDisk(_Total)\% Disk Time' -ErrorAction SilentlyContinue
+        $s = @{}
+        if ($counters) { foreach ($sm in $counters.CounterSamples) { $idx = $sm.Path.IndexOf("\", 2); $clean = $sm.Path.Substring($idx).ToUpperInvariant(); $s[$clean] = $sm.CookedValue } }
+        $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+        $totalMB = if ($os) { [math]::Round($os.TotalVisibleMemorySize / 1024, 0) } else { 0 }
+        $availMB = if ($s['\MEMORY\AVAILABLE MBYTES']) { [math]::Round($s['\MEMORY\AVAILABLE MBYTES'], 0) } else { 0 }
+        $usedMB = $totalMB - $availMB
+        $ramPct = if ($totalMB -gt 0) { [math]::Round(($usedMB / $totalMB) * 100, 1) } else { 0 }
+        $commitPct = 0
+        if ($s['\MEMORY\COMMITTED BYTES'] -and $s['\MEMORY\COMMIT LIMIT']) {
+            $commitPct = [math]::Round(($s['\MEMORY\COMMITTED BYTES'] / $s['\MEMORY\COMMIT LIMIT']) * 100, 1)
+        }
+        return @{
+            ts = (Get-Date -Format 'HH:mm:ss')
+            hostname = $env:COMPUTERNAME
+            ram_pct = $ramPct
+            ram_avail_mb = $availMB
+            ram_total_gb = [math]::Round($totalMB / 1024, 1)
+            commit_pct = $commitPct
+            cpu_pct = if ($s['\PROCESSOR(_TOTAL)\% PROCESSOR TIME']) { [math]::Round($s['\PROCESSOR(_TOTAL)\% PROCESSOR TIME'], 1) } else { 0 }
+            disk_pct = if ($s['\PHYSICALDISK(_TOTAL)\% DISK TIME']) { [math]::Round($s['\PHYSICALDISK(_TOTAL)\% DISK TIME'], 1) } else { 0 }
+            _fast = $true
+        }
+    } catch { return $null }
+}
+
+$fastTimer = New-Object System.Timers.Timer
+$fastTimer.Interval = $script:FastUpdateInterval
+$fastTimer.AutoReset = $true
+Register-ObjectEvent -InputObject $fastTimer -EventName Elapsed -Action {
+    if ($script:WSClients.Count -eq 0) { return }
+    $now = Get-Date
+    if (($now - $script:LastFastUpdate).TotalMilliseconds -lt $script:FastUpdateInterval) { return }
+    $script:LastFastUpdate = $now
+    try {
+        $data = Get-FastMetrics
+        if ($data) { Broadcast-WebSocketData $data }
+    } catch {}
+} | Out-Null
+$fastTimer.Start()
 
 if ($OPEN_BROWSER -and -not $Tray) {
     Start-Process "http://${HOSTNAME}:$Port"
@@ -677,7 +744,7 @@ Get-CachedStaticData
 
 $refreshRateFile = Join-Path $env:TEMP "pcmon_refresh_rate.txt"
 $profilePathsFile = Join-Path $env:TEMP "pcmon_profile_paths.json"
-"4000" | Out-File -FilePath $refreshRateFile -Encoding UTF8 -Force
+"500" | Out-File -FilePath $refreshRateFile -Encoding UTF8 -Force
 $profilePathsJson = @(
     $PROFILE.AllUsersAllHosts,
     $PROFILE.AllUsersCurrentHost,
@@ -686,7 +753,7 @@ $profilePathsJson = @(
 ) | Where-Object { $_ } | ConvertTo-Json -Compress
 $profilePathsJson | Out-File -FilePath $profilePathsFile -Encoding UTF8 -Force
 
-Write-Host "  Starting background data collection..." -NoNewline
+Write-Host "  Initializing data collection..." -NoNewline
 $sw2 = [Diagnostics.Stopwatch]::StartNew()
 $sw2.Start()
 Start-Sleep 3
@@ -695,7 +762,9 @@ if (Test-Path $cacheFile) {
     try {
         $script:LiveDataCache = Get-Content $cacheFile -Raw | ConvertFrom-Json
         $script:LiveCacheTime = Get-Date
-        Write-Host " $($sw2.ElapsedMilliseconds)ms (from cache)" -ForegroundColor Green
+        $initMs = $sw2.ElapsedMilliseconds
+        Write-Host " ${initMs}ms" -ForegroundColor Green -NoNewline
+        Write-Host " | WebSocket/SSE streaming enabled" -ForegroundColor Cyan
     } catch {
         Write-Host " failed, using sync collection" -ForegroundColor Yellow
         $script:LiveDataCache = _CollectLiveData
@@ -726,7 +795,7 @@ $bgRefreshRate = 3500
 if ($bgDebug) { Write-Host "[BG DEBUG] Started. Debug mode ON." -ForegroundColor Cyan }
 while ($true) {
     try { $bgRefreshRate = [int](Get-Content $refreshRateFile -Raw -ErrorAction SilentlyContinue) } catch {}
-    if ($bgRefreshRate -lt 1000) { $bgRefreshRate = 3500 }
+    if ($bgRefreshRate -lt 500) { $bgRefreshRate = 500 }
     if ($firstRun) { $firstRun = $false } else { Start-Sleep -Milliseconds $bgRefreshRate }
     if ($bgDebug) { Write-Host "[BG DEBUG] Cycle starting. Rate: ${bgRefreshRate}ms" -ForegroundColor Cyan }
     $t0 = [DateTime]::UtcNow.Ticks
@@ -893,8 +962,9 @@ try {
                 cached_drives_count = if ($script:CachedStatic.Drives) { $script:CachedStatic.Drives.Count } else { 0 }
                 commandlines_cached = $script:CommandLines.Count
                 static_files = $script:StaticFiles.Keys
+                ws_clients = $script:WSClients.Count
                 connection_method = $script:ConnectionMethod
-                broadcast_interval_ms = $script:BroadcastInterval
+                broadcast_interval_ms = $script:WSBroadcastInterval
             } | ConvertTo-Json -Compress
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($debug)
             $response.ContentType = "application/json"
@@ -1326,15 +1396,14 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
                                     if ($data) {
                                         $json = $data | ConvertTo-Json -Depth 20 -Compress
                                         $payload = [System.Text.Encoding]::UTF8.GetBytes("data: $json`n`n")
-                                        $response.OutputStream.Write($payload, 0, $payload.Length)
-                                        $response.OutputStream.Flush()
+                                        try { $response.OutputStream.Write($payload, 0, $payload.Length); $response.OutputStream.Flush() } catch { break }
                                     }
                                 }
                             }
                             Start-Sleep -Milliseconds 50
                         } catch { break }
                     }
-                } catch {}
+                } catch { if ($script:DebugMode) { Write-Host "[DEBUG] SSE error: $($_.Exception.Message)" -ForegroundColor DarkGray } }
                 $response.StatusCode = 200
             }
             $response.Close()
