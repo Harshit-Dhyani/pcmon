@@ -93,7 +93,7 @@ Rules for the `pcmon` workspace. Optimize for correctness, security, production 
 ## 7. Architecture Rules
 
 ### Source File Structure
-- **Backend**: `backend/src/*.ps1` — source modules, committed to git
+- **Backend**: `src/backend/*.ps1` — source modules, committed to git
   - `00-config.ps1` — params, setup, constants, protected processes, thresholds, config loading
   - `01-logging.ps1` — Write-Log, Write-Err
   - `02-http-helpers.ps1` — Send-Response (JSON/binary response helper)
@@ -103,22 +103,22 @@ Rules for the `pcmon` workspace. Optimize for correctness, security, production 
   - `06-background.ps1` — background collection script content (here-string, used by server)
   - `07-server.ps1` — HTTP server, routes, report HTML, background startup, tray, wallpaper
   - `main.ps1` — thin entry point (dot-sources all modules)
-- **Frontend**: `web/src/*.js` — modular JS split by responsibility (number prefix controls load order)
+- **Frontend**: `src/web/src/*.js` — modular JS split by responsibility (number prefix controls load order)
   - `1-config.js` — global state (PCM)
   - `2-utils.js` — utilities, sparklines, formatting
   - `3-stream.js` — WS/SSE/HTTP streaming
   - `4-api.js` — REST API client
   - `5-render.js` — main render engine
-- **Build output** (generated, committed):
-  - `pcmon.ps1` — built from `backend/src/` (concatenated modules, region markers stripped)
-  - `web/dist/index.html` — built from `web/src/` (CSS+JS inlined)
+- **Build output** (generated, committed to root):
+  - `pcmon.ps1` — built from `src/backend/` (concatenated modules, region markers stripped)
+  - `web/dist/index.html` — built from `src/web/` (CSS+JS inlined)
 
 ### Build System
-- `build.ps1` handles both frontend and backend builds
-- `.\build.ps1` — full build (frontend + backend)
-- `.\build.ps1 -FrontendOnly` — frontend only
-- `.\build.ps1 -BackendOnly` — backend only
-- `.\build.ps1 -Watch` — watch mode for frontend
+- `src/build.ps1` handles both frontend and backend builds
+- `.\src\build.ps1` — full build (frontend + backend)
+- `.\src\build.ps1 -FrontendOnly` — frontend only
+- `.\src\build.ps1 -BackendOnly` — backend only
+- `.\src\build.ps1 -Watch` — watch mode for frontend JS
 - Region markers (`#region ... #endregion`) are stripped during build
 - BOM is removed from each source file
 - Build validates no duplicate function definitions

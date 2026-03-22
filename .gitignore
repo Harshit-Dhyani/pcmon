@@ -19,8 +19,6 @@ nul
 
 # Build output
 web/dist/
-build/
-build_backend.js
 
 # Lock files (optional - uncomment if you want to track)
 # bun.lock

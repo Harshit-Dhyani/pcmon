@@ -1,13 +1,897 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
+<!-- Built 2026-03-22 20:37:54 v1.0.0 | Source: web/src/ -->
+="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>PC Monitor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="dashboard.css">
+<style>
+/* ── Reset & Root ─────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* Background layers */
+  --bg:        #05070d;
+  --bg2:       #080c15;
+  --surface:   rgba(12, 18, 32, 0.7);
+  --surface2:  rgba(16, 24, 44, 0.6);
+  --glass:     rgba(255, 255, 255, 0.03);
+  --glass-hi:  rgba(255, 255, 255, 0.07);
+
+  /* Borders */
+  --border:    rgba(255, 255, 255, 0.07);
+  --border2:   rgba(255, 255, 255, 0.12);
+
+  /* Text */
+  --text:      #e2eeff;
+  --text2:     #8ba4cc;
+  --text3:     #3d5580;
+
+  /* Accent palette */
+  --ok:        #00f5b0;
+  --ok-dim:    rgba(0, 245, 176, 0.15);
+  --ok-glow:   rgba(0, 245, 176, 0.35);
+  --warn:      #ffbe3d;
+  --warn-dim:  rgba(255, 190, 61, 0.15);
+  --bad:       #ff4571;
+  --bad-dim:   rgba(255, 69, 113, 0.15);
+  --bad-glow:  rgba(255, 69, 113, 0.35);
+  --info:      #3d9eff;
+  --info-dim:  rgba(61, 158, 255, 0.15);
+  --info-glow: rgba(61, 158, 255, 0.3);
+  --accent:    #67b7ff;
+  --text-dim:  #8ba4cc;
+
+  /* Typography */
+  --mono: 'Geist Mono', monospace;
+  --sans: 'Outfit', sans-serif;
+
+  /* Misc */
+  --r:  10px;
+  --r2: 16px;
+  --blur: blur(20px);
+  --blur2: blur(40px);
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  overflow-x: hidden;
+  font-weight: 400;
+}
+
+/* Ambient background orbs */
+body::before, body::after {
+  content: '';
+  position: fixed;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+}
+body::before {
+  width: 600px; height: 600px;
+  top: -200px; left: -200px;
+  background: radial-gradient(circle, rgba(61,158,255,0.06) 0%, transparent 70%);
+}
+body::after {
+  width: 500px; height: 500px;
+  bottom: -150px; right: -150px;
+  background: radial-gradient(circle, rgba(0,245,176,0.05) 0%, transparent 70%);
+}
+
+/* ── Scrollbar ──────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+.hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  height: 54px;
+  background: rgba(5, 7, 13, 0.85);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 200;
+}
+
+.hdr-left { display: flex; align-items: center; gap: 14px; }
+
+.hdr-logo {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.hdr-logo em {
+  color: var(--ok);
+  font-style: normal;
+  text-shadow: 0 0 12px var(--ok-glow);
+}
+
+.pip {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 2px var(--ok-dim), 0 0 12px var(--ok-glow);
+  animation: blink 2.5s ease infinite;
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 2px var(--ok-dim), 0 0 12px var(--ok-glow); }
+  50%       { opacity: 0.5; box-shadow: 0 0 0 2px transparent, 0 0 4px transparent; }
+}
+
+.host-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text2);
+  background: var(--glass);
+  border: 1px solid var(--border);
+  padding: 3px 10px;
+  border-radius: 20px;
+  letter-spacing: 0.3px;
+}
+
+.hdr-right { display: flex; align-items: center; gap: 16px; }
+
+.route-links {
+  display: flex;
+  gap: 6px;
+  margin-right: 8px;
+}
+.route-links a {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text3);
+  text-decoration: none;
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border2);
+  transition: all 0.15s;
+}
+.route-links a:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(0, 210, 255, 0.1);
+}
+
+.ts {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text3);
+  min-width: 64px;
+  text-align: right;
+  letter-spacing: 0.5px;
+}
+
+.rf-lbl { font-size: 11px; color: var(--text3); }
+
+.rf-sel {
+  background: var(--glass);
+  border: 1px solid var(--border2);
+  color: var(--text2);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.rf-sel:focus { border-color: var(--info); }
+
+/* ── Nav ────────────────────────────────────────────────────────────── */
+.nav {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 0 24px;
+  background: rgba(5, 7, 13, 0.7);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  position: sticky;
+  top: 54px;
+  z-index: 190;
+}
+.nav::-webkit-scrollbar { height: 0; }
+
+.ntab {
+  padding: 11px 16px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.9px;
+  color: var(--text3);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.2s, border-color 0.2s;
+  user-select: none;
+  white-space: nowrap;
+  position: relative;
+}
+.ntab:hover { color: var(--text2); }
+.ntab.on {
+  color: var(--text);
+  border-bottom-color: var(--info);
+}
+.ntab.on::after {
+  content: '';
+  position: absolute;
+  bottom: -1px; left: 50%;
+  transform: translateX(-50%);
+  width: 40%;
+  height: 1px;
+  background: var(--info);
+  box-shadow: 0 0 8px var(--info-glow);
+}
+
+/* ── Alerts ─────────────────────────────────────────────────────────── */
+.alerts { padding: 12px 24px 0; display: flex; flex-direction: column; gap: 6px; }
+
+.al {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-radius: var(--r);
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid;
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+}
+.al.show { display: flex; }
+.al-bad  { background: var(--bad-dim);  border-color: rgba(255,69,113,0.25);  color: #ff8fa8; }
+.al-warn { background: var(--warn-dim); border-color: rgba(255,190,61,0.25); color: #ffd080; }
+
+/* ── Main ───────────────────────────────────────────────────────────── */
+.main { padding: 20px 24px 60px; position: relative; z-index: 1; }
+
+.pg { display: none; }
+.pg.on { display: block; animation: fadein 0.25s ease; }
+@keyframes fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* ── Summary Strip (stat cards) ────────────────────────────────────── */
+.strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+@media (max-width: 900px)  { .strip { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 480px)  { .strip { grid-template-columns: 1fr; } }
+
+.scard {
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border);
+  border-radius: var(--r2);
+  padding: 18px 20px 16px;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.4s, box-shadow 0.4s;
+}
+.scard::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--r2);
+  pointer-events: none;
+  transition: background 0.4s;
+}
+/* Glow accent top-right */
+.scard::after {
+  content: '';
+  position: absolute;
+  top: -40px; right: -40px;
+  width: 120px; height: 120px;
+  border-radius: 50%;
+  pointer-events: none;
+  transition: background 0.5s;
+}
+.scard.ok  { border-color: rgba(0,245,176,0.18); box-shadow: 0 0 30px -8px rgba(0,245,176,0.08); }
+.scard.ok::after  { background: radial-gradient(circle, rgba(0,245,176,0.12) 0%, transparent 70%); }
+.scard.ok::before { background: linear-gradient(135deg, rgba(0,245,176,0.04) 0%, transparent 60%); }
+
+.scard.warn { border-color: rgba(255,190,61,0.22); box-shadow: 0 0 30px -8px rgba(255,190,61,0.1); }
+.scard.warn::after  { background: radial-gradient(circle, rgba(255,190,61,0.14) 0%, transparent 70%); }
+.scard.warn::before { background: linear-gradient(135deg, rgba(255,190,61,0.05) 0%, transparent 60%); }
+
+.scard.bad  { border-color: rgba(255,69,113,0.25); box-shadow: 0 0 30px -8px rgba(255,69,113,0.12); }
+.scard.bad::after   { background: radial-gradient(circle, rgba(255,69,113,0.15) 0%, transparent 70%); }
+.scard.bad::before  { background: linear-gradient(135deg, rgba(255,69,113,0.06) 0%, transparent 60%); }
+
+.scard-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+
+.scard-lbl {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--text3);
+}
+
+.sbadge {
+  font-family: var(--mono);
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  padding: 2px 7px;
+  border-radius: 20px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  border: 1px solid;
+}
+.sbadge.show { opacity: 1; }
+.sbadge.ok   { background: var(--ok-dim);   color: var(--ok);   border-color: rgba(0,245,176,0.3); }
+.sbadge.warn { background: var(--warn-dim); color: var(--warn); border-color: rgba(255,190,61,0.3); }
+.sbadge.bad  { background: var(--bad-dim);  color: var(--bad);  border-color: rgba(255,69,113,0.3); }
+
+.sval {
+  font-family: var(--mono);
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -1.5px;
+  transition: color 0.4s;
+}
+.sval.ok   { color: var(--ok);   text-shadow: 0 0 20px var(--ok-glow); }
+.sval.warn { color: var(--warn); text-shadow: 0 0 20px rgba(255,190,61,0.4); }
+.sval.bad  { color: var(--bad);  text-shadow: 0 0 20px var(--bad-glow); }
+
+.strend {
+  font-size: 14px;
+  font-weight: 500;
+  margin-left: 6px;
+  color: var(--text-dim);
+  opacity: 0.8;
+}
+
+.ssub {
+  font-size: 11px;
+  color: var(--text3);
+  margin-top: 6px;
+  font-family: var(--mono);
+  line-height: 1.5;
+  min-height: 16px;
+}
+
+/* Track bar */
+.strack {
+  height: 3px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 2px;
+  margin-top: 14px;
+  overflow: hidden;
+}
+.sfill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.sfill.ok   { background: linear-gradient(90deg, rgba(0,245,176,0.5), var(--ok)); }
+.sfill.warn { background: linear-gradient(90deg, rgba(255,190,61,0.5), var(--warn)); }
+.sfill.bad  { background: linear-gradient(90deg, var(--warn), var(--bad)); }
+
+/* Sparkline */
+.spark {
+  height: 32px;
+  margin-top: 10px;
+  overflow: hidden;
+  position: relative;
+}
+.spark svg {
+  width: 100%; height: 100%;
+  display: block;
+}
+.spark-line-ok   { stroke: var(--ok);   filter: drop-shadow(0 0 3px var(--ok-glow)); }
+.spark-line-warn { stroke: var(--warn); filter: drop-shadow(0 0 3px rgba(255,190,61,0.4)); }
+.spark-line-bad  { stroke: var(--bad);  filter: drop-shadow(0 0 3px var(--bad-glow)); }
+.spark-line-info { stroke: var(--info); filter: drop-shadow(0 0 3px var(--info-glow)); }
+
+/* ── Grids ──────────────────────────────────────────────────────────── */
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+.grid3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 1000px) { .grid2 { grid-template-columns: 1fr; } }
+@media (max-width: 700px)  { .grid3 { grid-template-columns: 1fr 1fr; } }
+
+/* ── Panel ──────────────────────────────────────────────────────────── */
+.pnl {
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border);
+  border-radius: var(--r2);
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+.pnl:hover { border-color: var(--border2); }
+
+.pnl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--glass);
+}
+
+.pnl-title {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--info);
+}
+
+.pnl-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text3);
+  background: var(--glass);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+
+.pnl-body { padding: 14px 16px; }
+
+/* ── Table ──────────────────────────────────────────────────────────── */
+.tbl-scroll { max-height: 380px; overflow-y: auto; }
+
+table { width: 100%; border-collapse: collapse; }
+
+thead th {
+  position: sticky;
+  top: 0;
+  background: rgba(8, 12, 21, 0.95);
+  backdrop-filter: var(--blur);
+  padding: 9px 12px;
+  text-align: left;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.9px;
+  color: var(--text3);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--mono);
+}
+thead th:hover { color: var(--text2); }
+thead th.asc::after  { content: ' ↑'; color: var(--info); }
+thead th.desc::after { content: ' ↓'; color: var(--info); }
+
+tbody tr {
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  transition: background 0.12s;
+}
+tbody tr:last-child { border-bottom: none; }
+tbody tr:hover { background: rgba(61,158,255,0.04); }
+
+tbody td {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text2);
+}
+
+.tn {
+  font-weight: 600;
+  color: var(--text);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.mn {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text3);
+}
+
+.ok   { color: var(--ok)   !important; }
+.warn { color: var(--warn) !important; }
+.bad  { color: var(--bad)  !important; }
+.dim  { color: var(--text3)!important; }
+
+/* Mini bar in table */
+.mbar { width: 56px; height: 3px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden; }
+.mbar-f { height: 100%; border-radius: 2px; }
+.mbar-f.ok   { background: var(--ok); }
+.mbar-f.warn { background: var(--warn); }
+.mbar-f.bad  { background: linear-gradient(90deg, var(--warn), var(--bad)); }
+
+/* ── Drive Cards ────────────────────────────────────────────────────── */
+.drive-card {
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  transition: border-color 0.2s;
+}
+.drive-card:last-child { margin-bottom: 0; }
+.drive-card:hover { border-color: var(--border2); }
+
+.drive-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px; }
+.drive-letter { font-family: var(--mono); font-weight: 700; font-size: 14px; color: var(--text); }
+.drive-pct { font-family: var(--mono); font-size: 12px; font-weight: 600; }
+.drive-label { font-size: 10px; color: var(--text3); margin-bottom: 8px; }
+.drive-bar { height: 4px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden; margin-bottom: 5px; }
+.drive-fill { height: 100%; border-radius: 2px; transition: width 0.6s ease; }
+.drive-fill.ok   { background: linear-gradient(90deg, rgba(0,245,176,0.6), var(--ok)); }
+.drive-fill.warn { background: linear-gradient(90deg, rgba(255,190,61,0.6), var(--warn)); }
+.drive-fill.bad  { background: linear-gradient(90deg, var(--warn), var(--bad)); }
+.drive-meta { font-size: 10px; color: var(--text3); font-family: var(--mono); }
+
+/* ── I/O Cards ──────────────────────────────────────────────────────── */
+.io-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+
+.io-card {
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 12px 14px;
+  transition: border-color 0.2s;
+}
+.io-card:hover { border-color: var(--border2); }
+
+.io-lbl, .io-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text3);
+  margin-bottom: 6px;
+  display: block;
+}
+.io-row { display: flex; justify-content: space-between; align-items: baseline; }
+
+.io-val {
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  display: block;
+}
+.io-unit { font-size: 10px; color: var(--text3); margin-left: 2px; }
+
+/* ── Pool Cards ─────────────────────────────────────────────────────── */
+.pool-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 18px; }
+
+.pool-card {
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border);
+  border-radius: var(--r2);
+  padding: 16px 18px;
+}
+
+.pool-lbl {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--info);
+  margin-bottom: 8px;
+}
+.pool-val { font-family: var(--mono); font-size: 26px; font-weight: 700; line-height: 1.2; color: var(--text); }
+.pool-desc { font-size: 11px; color: var(--text3); margin-top: 6px; line-height: 1.5; }
+
+/* ── GPU ────────────────────────────────────────────────────────────── */
+.gpu-card {
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 14px 16px;
+  margin-bottom: 8px;
+}
+.gpu-card:last-child { margin-bottom: 0; }
+.gpu-name { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 8px; word-break: break-word; }
+.gpu-stat { font-size: 11px; color: var(--text3); margin-bottom: 3px; }
+.gpu-bar { height: 4px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden; margin-top: 8px; }
+.gpu-fill { height: 100%; background: linear-gradient(90deg, var(--info), var(--ok)); border-radius: 2px; }
+#pg-gpu.gpu-unavailable { opacity: 0.5; }
+
+/* ── Groups ─────────────────────────────────────────────────────────── */
+.insight {
+  padding: 10px 14px;
+  border-left: 2px solid var(--info);
+  background: var(--info-dim);
+  border-radius: 0 var(--r) var(--r) 0;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text2);
+  line-height: 1.5;
+}
+.insight:last-child { margin-bottom: 0; }
+
+/* ── System Summary ─────────────────────────────────────────────────── */
+.sys-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+}
+.sys-row:last-child { border-bottom: none; }
+.sys-row span:first-child { color: var(--text3); font-size: 11px; }
+.sys-row span:last-child  { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--text); }
+
+/* ── Search ─────────────────────────────────────────────────────────── */
+.sbar {
+  background: var(--glass);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 12px;
+  padding: 7px 12px;
+  border-radius: var(--r);
+  outline: none;
+  width: 200px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.sbar:focus {
+  border-color: var(--info);
+  box-shadow: 0 0 0 2px var(--info-dim);
+}
+.sbar::placeholder { color: var(--text3); }
+
+/* ── Section head ───────────────────────────────────────────────────── */
+.sec-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+
+/* ── Footer note ────────────────────────────────────────────────────── */
+.footer-note {
+  font-size: 11px;
+  color: var(--text3);
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Disk page old ──────────────────────────────────────────────────── */
+.disk-item { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.disk-item:last-child { border-bottom: none; }
+.disk-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.disk-name { font-family: var(--mono); font-weight: 700; font-size: 12px; }
+.disk-pct  { font-family: var(--mono); font-size: 11px; }
+.disk-track { height: 4px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden; margin-bottom: 4px; }
+.disk-fill  { height: 100%; border-radius: 2px; transition: width 0.6s ease; }
+.disk-fill.ok   { background: var(--ok); }
+.disk-fill.warn { background: var(--warn); }
+.disk-fill.bad  { background: linear-gradient(90deg,var(--warn),var(--bad)); }
+.disk-meta { font-size: 10px; color: var(--text3); font-family: var(--mono); display: flex; justify-content: space-between; }
+
+/* ── Note ───────────────────────────────────────────────────────────── */
+.note { font-size: 12px; color: var(--text3); font-style: italic; }
+
+/* ── Skeleton Loader ────────────────────────────────────────────────── */
+.sk {
+  background: linear-gradient(90deg,
+    rgba(255,255,255,0.04) 25%,
+    rgba(255,255,255,0.08) 50%,
+    rgba(255,255,255,0.04) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease infinite;
+  border-radius: 4px;
+}
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.sk-val   { width: 80px;  height: 36px; border-radius: 6px; margin-bottom: 6px; }
+.sk-sub   { width: 120px; height: 11px; border-radius: 4px; margin-bottom: 14px; }
+.sk-bar   { width: 100%;  height: 3px;  border-radius: 2px; margin-top: 4px; }
+.sk-spark { width: 100%;  height: 32px; border-radius: 4px; margin-top: 8px; }
+.sk-row   { width: 100%;  height: 32px; border-radius: 4px; margin-bottom: 4px; }
+.sk-title { width: 140px; height: 10px; border-radius: 4px; }
+.sk-badge { width: 50px;  height: 18px; border-radius: 20px; }
+.sk-text  { height: 11px; border-radius: 3px; }
+
+/* Stagger skeletons */
+.sk:nth-child(2) { animation-delay: 0.1s; }
+.sk:nth-child(3) { animation-delay: 0.2s; }
+.sk:nth-child(4) { animation-delay: 0.3s; }
+
+/* Scard skeleton state */
+.scard.loading .sval    { opacity: 0; }
+.scard.loading .ssub    { opacity: 0; }
+.scard.loading .sbadge  { opacity: 0; }
+.scard.loading .strack  { opacity: 0; }
+.scard.loading .spark   { opacity: 0; }
+.scard.loading::after   { opacity: 0; }
+.scard.loading .sk      { display: block; }
+.scard .sk              { display: none; }
+
+/* spark big on disk/activity */
+#disk-spk, #net-spk { height: 60px; }
+#disk-spk .spark-line, #net-spk .spark-line { stroke-width: 1.5; }
+
+/* ── Debug / Error Styles ─────────────────────────────────────── */
+.err-banner {
+  background: var(--bad-dim);
+  border: 1px solid var(--bad);
+  border-radius: var(--r);
+  padding: 8px 12px;
+  color: var(--bad);
+  font-size: 12px;
+}
+.err-banner a { color: var(--accent); }
+
+.err-entry {
+  display: flex;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  align-items: flex-start;
+}
+.err-entry:last-child { border-bottom: none; }
+.err-time { color: var(--text3); min-width: 70px; }
+.err-type {
+  background: var(--bad-dim);
+  color: var(--bad);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  text-transform: uppercase;
+}
+.err-entry.fetch .err-type { background: var(--warn-dim); color: var(--warn); }
+.err-entry.promise .err-type { background: var(--info-dim); color: var(--info); }
+.err-msg { color: var(--text); flex: 1; word-break: break-all; }
+
+#js-err-count {
+  background: var(--bad-dim);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+}
+
+/* ── Snapshots Styles ───────────────────────────────────────────── */
+.snap-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px;
+  background: var(--surface);
+  border-radius: var(--r);
+}
+.snap-msg {
+  color: var(--ok);
+  font-size: 12px;
+}
+.snap-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+#pg-snapshots .pnl { margin-bottom: 0; }
+#snapshots-tbl td, #snapshots-tbl th {
+  padding: 8px 12px;
+  font-size: 12px;
+}
+#snapshots-tbl tr.selected {
+  background: var(--info-dim);
+}
+.compare-summary {
+  margin-bottom: 12px;
+  padding: 8px;
+  background: var(--glass);
+  border-radius: var(--r);
+  font-size: 12px;
+}
+.compare-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.compare-name { color: var(--text2); }
+.compare-diff { font-family: var(--mono); font-weight: 500; }
+.compare-procs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.compare-procs span {
+  background: var(--glass);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--text2);
+}
+.btn {
+  padding: 8px 14px;
+  font-size: 12px;
+  background: var(--glass);
+  color: var(--text);
+  border: 1px solid var(--border2);
+  border-radius: var(--r);
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, color 0.2s;
+}
+.btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(103,183,255,0.08);
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 11px;
+  background: var(--info-dim);
+  color: var(--info);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.btn-sm:hover { background: var(--info); color: var(--bg); }
+.btn-primary {
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  padding: 8px 16px;
+  border-radius: var(--r);
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-primary:hover { background: #4db3ff; }
+
+
+
+.threshold-row { display:flex; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid var(--border); }
+.threshold-row:last-child { border-bottom: none; }
+.threshold-row label { flex:1; font-size:13px; color: var(--text2); }
+.threshold-row input[type="number"] { text-align:right; }
+.threshold-unit { color: var(--text3); font-size:12px; min-width:30px; }
+@media (max-width: 900px) {
+  .snap-controls { flex-wrap: wrap; }
+  .snap-grid { grid-template-columns: 1fr; }
+  .io-strip { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 560px) {
+  .io-strip { grid-template-columns: 1fr; }
+  .hdr { padding: 0 12px; }
+  .main, .alerts, .nav { padding-left: 12px; padding-right: 12px; }
+}
+
+</style>
 </head>
 <body>
 
@@ -641,10 +1525,1344 @@
 
 </div><!-- /main -->
 
-<script src="src/1-config.js"></script>
-<script src="src/2-utils.js"></script>
-<script src="src/3-stream.js"></script>
-<script src="src/4-api.js"></script>
-<script src="src/5-render.js"></script>
+<script>
+/* === MODULE: config ============================================= */
+/* Shared state object — all modules write/read from here */
+const PCM = {
+  /* Config constants */
+  HISTORY_SIZE: 40,
+  TABLE_UPDATE_INTERVAL: 4000,
+  DEFAULT_THRESHOLDS: { ram_pct: 85, cpu_pct: 90, commit_pct: 80, pages_sec: 1000, non_paged_mb: 1500, disk_pct: 90 },
+
+  /* State */
+  refreshInterval: 500,
+  pollTimer: null,
+  pollInFlight: false,
+  firstLoad: true,
+  lastTableUpdate: 0,
+  thresholds: {},
+  csrfToken: '',
+  connectionMethod: 'unknown',
+  eventSource: null,
+  wsSocket: null,
+  wsReconnectDelay: 1000,
+  wsMaxReconnectDelay: 10000,
+  resizeTimer: null,
+
+  /* Data */
+  cachedData: null,
+  history: { ram: [], cpu: [], disk: [], net: [], commit: [] },
+  prev: { ram: 0, cpu: 0, disk: 0, commit: 0 },
+
+  /* Performance */
+  perf: { fetchMs: 0, renderMs: 0, cycleMs: 0, fps: 0, fpsFrames: 0, fpsLast: 0 },
+  perfTimer: 0,
+
+  /* Errors */
+  errors: []
+};
+PCM.thresholds = { ...PCM.DEFAULT_THRESHOLDS };
+
+
+/* === MODULE: utils =============================================== */
+
+/* ── DOM Helpers ──────────────────────────────────────────────────── */
+const EL = id => document.getElementById(id);
+const TXT = (el, v) => { if (el) el.textContent = v; };
+const PCT = (el, v) => { if (el) el.style.width = Math.min(100, Math.max(0, v)) + '%'; };
+
+/* ── Escape ──────────────────────────────────────────────────────── */
+function esc(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+/* ── Status ──────────────────────────────────────────────────────── */
+function statusClass(v) {
+  if (v < 50) return 'ok';
+  if (v < 80) return 'warn';
+  return 'bad';
+}
+
+function COL(el, val) {
+  if (!el) return;
+  el.classList.remove('ok', 'warn', 'bad');
+  el.classList.add(statusClass(val));
+}
+
+function SBADGE(el, val) {
+  if (!el) return;
+  const cls = statusClass(val);
+  el.textContent = val < 50 ? 'OK' : val < 80 ? 'WARN' : 'HIGH';
+  el.className = 'sbadge show ' + cls;
+}
+
+function SCARD(el, val) {
+  if (!el) return;
+  el.classList.remove('ok', 'warn', 'bad');
+  el.classList.add(statusClass(val));
+}
+
+function FILL(el, val) {
+  if (!el) return;
+  PCT(el, val);
+  el.classList.remove('ok', 'warn', 'bad');
+  el.classList.add(statusClass(val));
+}
+
+/* ── Formatting ─────────────────────────────────────────────────── */
+function fmtNum(n, dec = 2) {
+  if (n === null || n === undefined || isNaN(n) || !isFinite(n)) return '—';
+  return n.toFixed(dec);
+}
+
+function fmtMem(mb) {
+  if (mb === null || mb === undefined || isNaN(mb) || !isFinite(mb)) return '—';
+  if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB';
+  return mb.toFixed(0) + ' MB';
+}
+
+function getTrend(current, previous) {
+  if (current == null || previous == null) return '';
+  const diff = current - previous;
+  if (diff > 0) return '↑' + diff.toFixed(1);
+  if (diff < 0) return '↓' + Math.abs(diff).toFixed(1);
+  return '→';
+}
+
+/* ── Skeleton ────────────────────────────────────────────────────── */
+function showSkeleton(skId, tableId) {
+  const sk = EL(skId);
+  const tbl = EL(tableId);
+  if (sk) sk.style.display = '';
+  if (tbl) tbl.style.display = 'none';
+}
+
+function hideSkeleton(skId, tableId) {
+  const sk = EL(skId);
+  const tbl = EL(tableId);
+  if (sk) sk.style.display = 'none';
+  if (tbl) tbl.style.display = '';
+}
+
+function unloadCard(cardEl) {
+  if (cardEl) cardEl.classList.remove('loading');
+}
+
+function showCardLoading(cardEl) {
+  if (cardEl && !cardEl.classList.contains('loading')) cardEl.classList.add('loading');
+}
+
+function showAllSkeletons() {
+  const cardIds = ['sc-ram', 'sc-cpu', 'sc-disk', 'sc-cm', 'r-sc-ram', 'r-sc-cm', 'r-sc-pg', 'c-sc-cpu', 'c-sc-pg'];
+  cardIds.forEach(id => { const el = EL(id); if (el) el.classList.add('loading'); });
+  const skPairs = [
+    ['ov-tbl-sk', 'ov-tbl'], ['r-tbl-sk', 'r-tbl'], ['c-tbl-sk', 'c-tbl'],
+    ['sus-tbl-sk', 'sus-tbl'], ['svc-tbl-sk', 'svc-tbl'],
+    ['startup-tbl-sk', 'startup-tbl'], ['pagefile-tbl-sk', 'pagefile-tbl'],
+    ['profiles-tbl-sk', 'profiles-tbl'], ['all-tbl-sk', 'all-tbl'],
+    ['ov-disks-sk', 'ov-disks'], ['disk-drives-sk', 'disk-drives'],
+    ['disk-io-sk', 'disk-io-strip'], ['ov-io-sk', 'ov-io'],
+    ['gpu-adapters-sk', 'gpu-adapters'], ['group-insights-sk', 'group-insights'],
+    ['sys-summary-sk', 'sys-summary'],
+    ['dbg-mem-sk', 'dbg-mem'], ['dbg-timeline-sk', 'dbg-timeline'],
+    ['dbg-sys-metrics-sk', 'dbg-sys-metrics'], ['dbg-cache-sk', 'dbg-cache']
+  ];
+  skPairs.forEach(([skId, tblId]) => showSkeleton(skId, tblId));
+}
+
+function hideAllSkeletons() {
+  const cardIds = ['sc-ram', 'sc-cpu', 'sc-disk', 'sc-cm', 'r-sc-ram', 'r-sc-cm', 'r-sc-pg', 'c-sc-cpu', 'c-sc-pg'];
+  cardIds.forEach(id => { const el = EL(id); if (el) el.classList.remove('loading'); });
+}
+
+/* ── Sparklines ───────────────────────────────────────────────────── */
+function hexOrVarToAlpha(color, alpha) {
+  if (color.startsWith('#')) {
+    let hex = color.slice(1);
+    if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+  if (color.startsWith('rgb(')) return color.replace(/\)$/, `,${alpha})`).replace('rgb(', 'rgba(');
+  return `rgba(0,245,176,${alpha})`;
+}
+
+function sparkColorVar(cls) {
+  if (cls === 'ok') return '--ok';
+  if (cls === 'warn') return '--warn';
+  if (cls === 'bad') return '--bad';
+  return '--info';
+}
+
+function updateHistory(type, value) {
+  if (typeof value !== 'number' || isNaN(value) || !isFinite(value)) return;
+  PCM.history[type].push(value);
+  if (PCM.history[type].length > PCM.HISTORY_SIZE) PCM.history[type].shift();
+}
+
+function drawSparkline(canvasId, values, colorVar, opts = {}) {
+  const canvas = EL(canvasId);
+  if (!canvas || !Array.isArray(values)) return;
+  const validValues = values.filter(v => typeof v === 'number' && Number.isFinite(v));
+  if (validValues.length < 2) return;
+
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement ? canvas.parentElement.getBoundingClientRect() : { width: 200, height: 32 };
+  const W = Math.max(Math.round(rect.width || 200), 100);
+  const H = parseInt(canvas.style.height, 10) || canvas.clientHeight || 32;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  canvas.width = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  const max = Math.max(...validValues, 1);
+  const min = Math.min(...validValues);
+  const range = max - min || 1;
+  const step = validValues.length > 1 ? W / (validValues.length - 1) : W;
+  const style = getComputedStyle(document.documentElement);
+  const color = style.getPropertyValue(colorVar).trim() || '#00f5b0';
+
+  // Grid lines
+  ctx.strokeStyle = hexOrVarToAlpha('#ffffff', 0.08);
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2, 4]);
+  for (let g = 0; g <= 4; g++) {
+    const y = Math.round((g / 4) * (H - 4)) + 2;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // Threshold line (if provided)
+  if (opts.threshold) {
+    const threshY = H - (opts.threshold / max) * (H - 4) - 2;
+    ctx.strokeStyle = opts.threshColor || '#ff6b6b';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(0, threshY);
+    ctx.lineTo(W, threshY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Points
+  const pts = validValues.map((v, i) => ({
+    x: i * step,
+    y: H - (v / max) * (H - 4) - 2
+  }));
+
+  // Smooth bezier curve
+  ctx.beginPath();
+  if (pts.length > 2) {
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[Math.max(0, i - 1)];
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      const p3 = pts[Math.min(pts.length - 1, i + 2)];
+      const cp1x = p1.x + (p2.x - p0.x) / 6;
+      const cp1y = p1.y + (p2.y - p0.y) / 6;
+      const cp2x = p2.x - (p3.x - p1.x) / 6;
+      const cp2y = p2.y - (p3.y - p1.y) / 6;
+      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+    }
+  } else {
+    ctx.moveTo(pts[0].x, pts[0].y);
+    ctx.lineTo(pts[1].x, pts[1].y);
+  }
+
+  // Gradient fill
+  const lastX = (validValues.length - 1) * step;
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, hexOrVarToAlpha(color, 0.5));
+  grad.addColorStop(0.5, hexOrVarToAlpha(color, 0.15));
+  grad.addColorStop(1, hexOrVarToAlpha(color, 0.02));
+  ctx.lineTo(lastX, H);
+  ctx.lineTo(pts[0].x, H);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Glow line
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 12;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2.5;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Animated pulse dot (current value)
+  const lastPt = pts[pts.length - 1];
+  const now = Date.now();
+  const pulse = Math.sin(now / 300) * 0.3 + 0.7;
+  
+  // Outer glow
+  ctx.beginPath();
+  ctx.arc(lastPt.x, lastPt.y, 6, 0, Math.PI * 2);
+  ctx.fillStyle = hexOrVarToAlpha(color, pulse * 0.3);
+  ctx.fill();
+  
+  // Inner dot
+  ctx.beginPath();
+  ctx.arc(lastPt.x, lastPt.y, 4, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 15;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Min/Max labels
+  if (opts.showMinMax !== false) {
+    ctx.font = '9px system-ui, sans-serif';
+    ctx.fillStyle = hexOrVarToAlpha('#ffffff', 0.5);
+    ctx.textAlign = 'right';
+    ctx.fillText(max.toFixed(0), W - 3, 10);
+    ctx.fillText(min.toFixed(0), W - 3, H - 2);
+  }
+
+  // Store for animation
+  canvas._lastDraw = now;
+}
+
+function refreshSparklines(cpuPct, ramPct, diskPct) {
+  drawSparkline('spk-ram', PCM.history.ram, sparkColorVar(statusClass(ramPct)));
+  drawSparkline('spk-cpu', PCM.history.cpu, sparkColorVar(statusClass(cpuPct)));
+  drawSparkline('spk-cpu2', PCM.history.cpu, sparkColorVar(statusClass(cpuPct)));
+  drawSparkline('spk-disk', PCM.history.disk, sparkColorVar(statusClass(diskPct)));
+  drawSparkline('disk-spk', PCM.history.disk, '--info');
+  drawSparkline('net-spk', PCM.history.net, '--ok');
+  drawSparkline('spk-cm', PCM.history.commit, sparkColorVar(statusClass(PCM.history.commit.slice(-1)[0] || 0)));
+}
+
+/* ── Fast update handler ─────────────────────────────────────────── */
+function handleFastUpdate(data) {
+  if (!data._fast) return;
+
+  if (PCM.cachedData) {
+    PCM.cachedData.ram_pct = data.ram_pct;
+    PCM.cachedData.ram_avail_mb = data.ram_avail_mb;
+    PCM.cachedData.commit_pct = data.commit_pct;
+    PCM.cachedData.cpu_pct = data.cpu_pct;
+    PCM.cachedData.disk_pct = data.disk_pct;
+  }
+
+  const ramPct = data.ram_pct || 0;
+  const cpuPct = data.cpu_pct || 0;
+  const diskPct = data.disk_pct || 0;
+  const ramStatus = ramPct > PCM.thresholds.ram_pct ? 'bad' : ramPct > PCM.thresholds.ram_pct * 0.8 ? 'warn' : 'ok';
+  const cpuStatus = cpuPct > PCM.thresholds.cpu_pct ? 'bad' : cpuPct > PCM.thresholds.cpu_pct * 0.8 ? 'warn' : 'ok';
+
+  TXT(EL('sv-ram'), ramPct.toFixed(1) + '%');
+  TXT(EL('ss-ram'), data.ram_avail_mb + ' MB avail');
+  COL(EL('sf-ram'), ramPct);
+  if (EL('sb-ram')) EL('sb-ram').textContent = ramPct > PCM.thresholds.ram_pct ? 'HIGH' : '';
+
+  TXT(EL('sv-cpu'), cpuPct.toFixed(1) + '%');
+  COL(EL('sf-cpu'), cpuPct);
+  if (EL('sb-cpu')) EL('sb-cpu').textContent = cpuPct > PCM.thresholds.cpu_pct ? 'HIGH' : '';
+
+  if (EL('sv-disk')) { TXT(EL('sv-disk'), diskPct.toFixed(1) + '%'); COL(EL('sf-disk'), diskPct); }
+
+  if (EL('r-sv-ram')) { TXT(EL('r-sv-ram'), ramPct.toFixed(1) + '%'); TXT(EL('r-avail'), data.ram_avail_mb + ' MB'); COL(EL('r-sf-ram'), ramPct); }
+  if (EL('c-sv-cpu')) { TXT(EL('c-sv-cpu'), cpuPct.toFixed(1) + '%'); COL(EL('c-sf-cpu'), cpuPct); }
+
+  PCM.history.ram.push(ramPct);
+  PCM.history.cpu.push(cpuPct);
+  PCM.history.disk.push(diskPct);
+  if (PCM.history.ram.length > PCM.HISTORY_SIZE) PCM.history.ram.shift();
+  if (PCM.history.cpu.length > PCM.HISTORY_SIZE) PCM.history.cpu.shift();
+  if (PCM.history.disk.length > PCM.HISTORY_SIZE) PCM.history.disk.shift();
+
+  const now = Date.now();
+  if (!handleFastUpdate._lastSparkline || now - handleFastUpdate._lastSparkline > 1000) {
+    handleFastUpdate._lastSparkline = now;
+    refreshSparklines(cpuPct, ramPct, diskPct);
+  }
+
+  if (EL('ts')) EL('ts').textContent = data.ts || '--:--:--';
+  PCM.perfTimer = now;
+  PCM.cachedData = PCM.cachedData || {};
+  PCM.cachedData.ts = data.ts;
+}
+
+
+/* === MODULE: stream ================================================ */
+
+/* ── WebSocket ────────────────────────────────────────────────────── */
+function tryWebSocket() {
+  if (PCM.wsSocket) { PCM.wsSocket.close(); PCM.wsSocket = null; }
+  try {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    PCM.wsSocket = new WebSocket(protocol + '//' + window.location.host + '/stream');
+    PCM.wsSocket.onopen = () => {
+      PCM.connectionMethod = 'websocket';
+      PCM.wsReconnectDelay = 1000;
+      if (PCM.eventSource) { PCM.eventSource.close(); PCM.eventSource = null; }
+      if (PCM.pollTimer) { clearTimeout(PCM.pollTimer); PCM.pollTimer = null; }
+      PCM.pollInFlight = false;
+      updateSettingsConnInfo();
+    };
+    PCM.wsSocket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data._fast) {
+          handleFastUpdate(data);
+        } else {
+          const renderStart = performance.now();
+          renderAll(data);
+          PCM.perf.renderMs = performance.now() - renderStart;
+          PCM.perf.cycleMs = PCM.perf.renderMs;
+          PCM.perfTimer = Date.now();
+          PCM.pollInFlight = false;
+          PCM.cachedData = data;
+          updateDebugPanel(data);
+          updateSettingsConnInfo();
+        }
+      } catch (e) {}
+    };
+    PCM.wsSocket.onerror = () => { PCM.connectionMethod = 'sse'; trySSE(); };
+    PCM.wsSocket.onclose = () => {
+      if (PCM.connectionMethod === 'websocket') { PCM.connectionMethod = 'sse'; trySSE(); }
+    };
+  } catch (e) { PCM.connectionMethod = 'sse'; trySSE(); }
+}
+
+/* ── SSE ──────────────────────────────────────────────────────────── */
+function trySSE() {
+  if (PCM.eventSource) { PCM.eventSource.close(); PCM.eventSource = null; }
+  if (PCM.wsSocket) { PCM.wsSocket.close(); PCM.wsSocket = null; }
+  try {
+    PCM.eventSource = new EventSource('/stream');
+    PCM.eventSource.onopen = () => {
+      PCM.connectionMethod = 'sse';
+      PCM.wsReconnectDelay = 1000;
+      if (PCM.pollTimer) { clearTimeout(PCM.pollTimer); PCM.pollTimer = null; }
+      PCM.pollInFlight = false;
+      updateSettingsConnInfo();
+    };
+    PCM.eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data._fast) {
+          handleFastUpdate(data);
+        } else {
+          const renderStart = performance.now();
+          renderAll(data);
+          PCM.perf.renderMs = performance.now() - renderStart;
+          PCM.perf.cycleMs = PCM.perf.renderMs;
+          PCM.perfTimer = Date.now();
+          PCM.pollInFlight = false;
+          PCM.cachedData = data;
+          updateDebugPanel(data);
+          updateSettingsConnInfo();
+        }
+      } catch (e) {}
+    };
+    PCM.eventSource.onerror = () => {
+      PCM.connectionMethod = 'http';
+      PCM.eventSource.close();
+      PCM.eventSource = null;
+      PCM.wsReconnectDelay = Math.min(PCM.wsReconnectDelay * 1.5, PCM.wsMaxReconnectDelay);
+      startHTTPPolling();
+    };
+  } catch (e) { PCM.connectionMethod = 'http'; startHTTPPolling(); }
+}
+
+function initStream() { tryWebSocket(); }
+
+function startHTTPPolling() {
+  if (PCM.pollTimer) return;
+  PCM.connectionMethod = 'http';
+  fetchData();
+}
+
+
+/* === MODULE: api ================================================== */
+
+/* ── Auth ─────────────────────────────────────────────────────────── */
+function authHeaders(extra = {}) {
+  const h = { 'Content-Type': 'application/json' };
+  if (PCM.csrfToken) h['X-PCMON-Token'] = PCM.csrfToken;
+  Object.assign(h, extra);
+  return h;
+}
+
+/* ── Schedule ─────────────────────────────────────────────────────── */
+function scheduleNextFetch(delay = PCM.refreshInterval) {
+  clearTimeout(PCM.pollTimer);
+  PCM.pollTimer = setTimeout(fetchData, Math.max(500, delay));
+}
+
+/* ── Fetch ────────────────────────────────────────────────────────── */
+async function fetchData() {
+  if (PCM.pollInFlight && PCM.connectionMethod === 'http') return;
+  if (PCM.connectionMethod === 'http') PCM.pollInFlight = true;
+  const t0 = performance.now();
+  try {
+    const res = await fetch('/data');
+    PCM.perf.fetchMs = performance.now() - t0;
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (PCM.connectionMethod !== 'websocket' && PCM.connectionMethod !== 'sse') {
+      const renderStart = performance.now();
+      renderAll(data);
+      PCM.perf.renderMs = performance.now() - renderStart;
+      PCM.perf.cycleMs = performance.now() - t0;
+      PCM.perfTimer = Date.now();
+      PCM.pollInFlight = false;
+      PCM.cachedData = data;
+      updateDebugPanel(data);
+      updateSettingsConnInfo();
+    }
+    if (PCM.connectionMethod === 'http') scheduleNextFetch();
+  } catch (e) {
+    PCM.perf.fetchMs = performance.now() - t0;
+    PCM.pollInFlight = false;
+    if (PCM.connectionMethod === 'http') scheduleNextFetch();
+  }
+}
+
+/* ── Bootstrap ────────────────────────────────────────────────────── */
+async function loadBootstrap() {
+  try {
+    const [dataRes, configRes] = await Promise.all([
+      fetch('/data'),
+      fetch('/api/config')
+    ]);
+    const data = await dataRes.json();
+    const config = await configRes.json();
+    PCM.thresholds = { ...PCM.DEFAULT_THRESHOLDS, ...(config.thresholds || {}) };
+    PCM.cachedData = data;
+    PCM.perfTimer = Date.now();
+    PCM.firstLoad = false;
+    renderAll(data);
+    updateDebugPanel(data);
+  } catch (e) {}
+}
+
+/* ── Process Actions ──────────────────────────────────────────────── */
+async function killProcess(pid, name) {
+  if (!confirm('Kill process "' + name + '" (PID: ' + pid + ')?')) return;
+  try {
+    const res = await fetch('/api/process/' + pid + '/kill', {
+      method: 'POST',
+      headers: authHeaders({ 'X-PCMON-Confirm': '1' })
+    });
+    const data = await res.json();
+    if (data.success) { alert('Process terminated: ' + data.message); fetchData(); }
+    else { alert('Failed: ' + data.error); }
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function suspendProcess(pid, name) {
+  if (!confirm('Suspend process "' + name + '" (PID: ' + pid + ')?')) return;
+  try {
+    const res = await fetch('/api/process/' + pid + '/suspend', {
+      method: 'POST',
+      headers: authHeaders({ 'X-PCMON-Confirm': '1' })
+    });
+    const data = await res.json();
+    if (data.success) { alert('Process suspended: ' + data.message); }
+    else { alert('Failed: ' + data.error); }
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function resumeProcess(pid, name) {
+  if (!confirm('Resume process "' + name + '" (PID: ' + pid + ')?')) return;
+  try {
+    const res = await fetch('/api/process/' + pid + '/resume', {
+      method: 'POST',
+      headers: authHeaders({ 'X-PCMON-Confirm': '1' })
+    });
+    const data = await res.json();
+    if (data.success) { alert('Process resumed: ' + data.message); }
+    else { alert('Failed: ' + data.error); }
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+/* ── Config ───────────────────────────────────────────────────────── */
+async function fetchConfig() {
+  try {
+    const res = await fetch('/api/config');
+    const data = await res.json();
+    PCM.thresholds = { ...PCM.DEFAULT_THRESHOLDS, ...(data.thresholds || {}) };
+  } catch (e) {}
+}
+
+async function saveConfig(cfg) {
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(cfg)
+    });
+    const data = await res.json();
+    if (data.success) PCM.thresholds = { ...PCM.thresholds, ...cfg };
+    return data.success;
+  } catch (e) { return false; }
+}
+
+async function saveThresholds(thresholds) {
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(thresholds)
+    });
+    const data = await res.json();
+    if (data.success) PCM.thresholds = { ...PCM.thresholds, ...thresholds };
+    return data.success;
+  } catch (e) { return false; }
+}
+
+/* ── Snapshots ────────────────────────────────────────────────────── */
+async function fetchSnapshots() {
+  try {
+    const res = await fetch('/api/snapshots');
+    return await res.json();
+  } catch (e) { return []; }
+}
+
+async function deleteSnapshot(id) {
+  try {
+    await fetch('/api/snapshots/' + id + '/delete', { method: 'POST', headers: authHeaders() });
+    renderSnapshots();
+  } catch (e) {}
+}
+
+async function exportSnapshot(id, format) {
+  window.open('/api/snapshots/' + id + '/export.' + format, '_blank');
+}
+
+async function compareSnapshots(id) {
+  try {
+    const res = await fetch('/api/snapshots/' + id + '/compare', {
+      method: 'POST',
+      headers: authHeaders()
+    });
+    return await res.json();
+  } catch (e) { return { error: 'Network error' }; }
+}
+
+async function fetchReport() {
+  try {
+    const res = await fetch('/api/report');
+    return await res.text();
+  } catch (e) { return '<p>Error loading report</p>'; }
+}
+
+async function fetchReportDownload() {
+  try {
+    const res = await fetch('/api/report/download');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'pcmon-report.html';
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) { alert('Download failed: ' + e.message); }
+}
+
+/* ── Errors ───────────────────────────────────────────────────────── */
+async function fetchErrors() {
+  try {
+    const res = await fetch('/errors');
+    const data = await res.json();
+    PCM.errors = data.errors || [];
+    updateDebugPanel(PCM.cachedData);
+  } catch (e) {}
+}
+
+/* ── Clipboard ───────────────────────────────────────────────────── */
+function copyTableToClipboard(tableId) {
+  const tbl = document.getElementById(tableId);
+  if (!tbl) return;
+  let text = '';
+  const headers = tbl.querySelectorAll('thead th');
+  headers.forEach((th, i) => { text += th.textContent + (i < headers.length - 1 ? '\t' : ''); });
+  text += '\n';
+  const rows = tbl.querySelectorAll('tbody tr');
+  rows.forEach(tr => {
+    const cells = tr.querySelectorAll('td');
+    cells.forEach((td, i) => { text += td.textContent + (i < cells.length - 1 ? '\t' : ''); });
+    text += '\n';
+  });
+  navigator.clipboard.writeText(text).then(() => alert('Copied to clipboard!')).catch(() => alert('Failed to copy'));
+}
+
+
+/* === MODULE: render ================================================ */
+
+/* ── Drives ───────────────────────────────────────────────────────── */
+function renderDrives(container, disks) {
+  if (!container) return;
+  container.innerHTML = '';
+  (disks || []).forEach(d => {
+    const pct = typeof d.pct === 'number' ? d.pct : 0;
+    const cls = pct < 70 ? 'ok' : pct < 85 ? 'warn' : 'bad';
+    const div = document.createElement('div');
+    div.className = 'drive-card';
+    div.innerHTML =
+      '<div class="drive-head"><span class="drive-letter">' + esc(d.drive || '?') + '</span><span class="drive-pct ' + cls + '">' + fmtNum(pct) + '%</span></div>' +
+      '<div class="drive-label">' + esc(d.label || '') + '</div>' +
+      '<div class="drive-bar"><div class="drive-fill ' + cls + '" style="width:' + pct + '%"></div></div>' +
+      '<div class="drive-meta">' + fmtMem(d.free_gb * 1024) + ' free&nbsp;/&nbsp;' + fmtMem(d.total_gb * 1024) + ' total</div>';
+    container.appendChild(div);
+  });
+}
+
+/* ── GPU ──────────────────────────────────────────────────────────── */
+function renderGPUAdapters(container, gpu) {
+  if (!container) return;
+  container.innerHTML = '';
+  if (!gpu || !gpu.available) { container.innerHTML = '<div class="note">No GPU data available</div>'; return; }
+  (gpu.adapters || []).forEach(a => {
+    const pct = a.pct || 0;
+    const div = document.createElement('div');
+    div.className = 'gpu-card';
+    div.innerHTML =
+      '<div class="gpu-name">' + esc(a.name || 'Unknown') + '</div>' +
+      '<div class="gpu-stat">Status: <span style="color:var(--ok)">' + esc(a.status || 'OK') + '</span></div>' +
+      '<div class="gpu-stat">Dedicated: ' + fmtMem((a.dedicated_gb || 0) * 1024) + '</div>' +
+      '<div class="gpu-stat">Total: ' + fmtMem((a.total_gb || 0) * 1024) + '</div>' +
+      '<div class="gpu-bar"><div class="gpu-fill" style="width:' + pct + '%"></div></div>';
+    container.appendChild(div);
+  });
+}
+
+/* ── I/O strip ──────────────────────────────────────────────────── */
+function ioHtml(io) {
+  return '<div class="io-card"><span class="io-lbl">' + esc(io.label) + '</span><span class="io-val">' + io.val + '</span></div>';
+}
+
+/* ── Table ────────────────────────────────────────────────────────── */
+function renderTable(tbl, rows, cols, opts = {}) {
+  if (!tbl) return;
+  tbl.innerHTML = '';
+  const thead = tbl.createTHead();
+  const hdr = thead.insertRow();
+  cols.forEach(c => { const th = document.createElement('th'); th.textContent = c; hdr.appendChild(th); });
+  if (opts.actions) { const th = document.createElement('th'); th.textContent = 'Actions'; hdr.appendChild(th); }
+  const tbody = tbl.createTBody();
+  const maxRows = opts.maxRows || 30;
+  rows.slice(0, maxRows).forEach((r, rowIdx) => {
+    const tr = tbody.insertRow();
+    cols.forEach((_, i) => { const td = tr.insertCell(); td.textContent = r[i] !== undefined ? r[i] : ''; });
+    if (opts.actions && opts.processData && opts.processData[rowIdx]) {
+      const p = opts.processData[rowIdx];
+      if (p && p.pid) {
+        const td = tr.insertCell();
+        const actions = [
+          { label: 'K', title: 'Kill process', fn: killProcess },
+          { label: 'S', title: 'Suspend process', fn: suspendProcess },
+          { label: 'R', title: 'Resume process', fn: resumeProcess }
+        ];
+        actions.forEach((action, idx) => {
+          const btn = document.createElement('button');
+          btn.className = 'btn-sm';
+          btn.title = action.title;
+          btn.textContent = action.label;
+          btn.dataset.pid = p.pid;
+          btn.dataset.name = p.name;
+          btn.style.marginRight = '2px';
+          btn.addEventListener('click', () => action.fn(p.pid, p.name));
+          td.appendChild(btn);
+        });
+        const cpBtn = document.createElement('button');
+        cpBtn.className = 'btn-sm';
+        cpBtn.title = 'Copy to clipboard';
+        cpBtn.textContent = 'C';
+        cpBtn.addEventListener('click', () => {
+          const pathEl = tbl.closest('.pg') || tbl;
+          copyTableToClipboard(tbl.id);
+        });
+        td.appendChild(cpBtn);
+      }
+    }
+  });
+}
+
+/* ── Main render ─────────────────────────────────────────────────── */
+function renderAll(d) {
+  if (!d) return;
+
+  /* Throttle table updates */
+  const now = Date.now();
+  const doTables = (now - PCM.lastTableUpdate) > PCM.TABLE_UPDATE_INTERVAL;
+  if (doTables) PCM.lastTableUpdate = now;
+
+  hideAllSkeletons();
+
+  /* Header */
+  if (EL('hdr-host')) EL('hdr-host').textContent = d.hostname || '—';
+
+  /* Overview metrics */
+  TXT(EL('sv-ram'), fmtNum(d.ram_pct) + '%');
+  TXT(EL('ss-ram'), fmtMem(d.ram_avail_mb) + ' avail');
+  COL(EL('sf-ram'), d.ram_pct || 0);
+  FILL(EL('sf-ram'), d.ram_pct || 0);
+  SBADGE(EL('sb-ram'), d.ram_pct || 0);
+  const ramTrend = getTrend(d.ram_pct, PCM.prev.ram);
+  if (EL('sdt-ram')) EL('sdt-ram').textContent = ramTrend;
+  PCM.prev.ram = d.ram_pct || 0;
+
+  TXT(EL('sv-cpu'), fmtNum(d.cpu_pct) + '%');
+  COL(EL('sf-cpu'), d.cpu_pct || 0);
+  FILL(EL('sf-cpu'), d.cpu_pct || 0);
+  SBADGE(EL('sb-cpu'), d.cpu_pct || 0);
+  const cpuTrend = getTrend(d.cpu_pct, PCM.prev.cpu);
+  if (EL('sdt-cpu')) EL('sdt-cpu').textContent = cpuTrend;
+  PCM.prev.cpu = d.cpu_pct || 0;
+
+  TXT(EL('sv-disk'), fmtNum(d.disk_pct) + '%');
+  COL(EL('sf-disk'), d.disk_pct || 0);
+  FILL(EL('sf-disk'), d.disk_pct || 0);
+  const diskTrend = getTrend(d.disk_pct, PCM.prev.disk);
+  if (EL('sdt-disk')) EL('sdt-disk').textContent = diskTrend;
+  PCM.prev.disk = d.disk_pct || 0;
+
+  TXT(EL('sv-cm'), fmtNum(d.commit_pct) + '%');
+  COL(EL('sf-cm'), d.commit_pct || 0);
+  FILL(EL('sf-fill-cm'), d.commit_pct || 0);
+  const cmTrend = getTrend(d.commit_pct, PCM.prev.commit);
+  if (EL('sdt-cm')) EL('sdt-cm').textContent = cmTrend;
+  PCM.prev.commit = d.commit_pct || 0;
+
+  TXT(EL('ts'), d.ts || '—');
+
+  /* Sparklines */
+  updateHistory('ram', d.ram_pct);
+  updateHistory('cpu', d.cpu_pct);
+  updateHistory('disk', d.disk_pct);
+  updateHistory('commit', d.commit_pct);
+  updateHistory('net', (d.net_sent_kb || 0) + (d.net_recv_kb || 0));
+  refreshSparklines(d.cpu_pct || 0, d.ram_pct || 0, d.disk_pct || 0);
+
+  /* RAM page */
+  TXT(EL('r-sv-ram'), fmtNum(d.ram_pct) + '%');
+  TXT(EL('r-avail'), fmtMem(d.ram_avail_mb) + ' / ' + fmtMem(d.ram_total_gb * 1024));
+  COL(EL('r-sf-ram'), d.ram_pct || 0);
+  FILL(EL('r-sf-fill-ram'), d.ram_pct || 0);
+  TXT(EL('r-sv-cm'), fmtNum(d.commit_pct) + '%');
+  TXT(EL('r-ss-cm'), fmtMem(d.commit_gb * 1024) + ' / ' + fmtMem(d.limit_gb * 1024));
+  COL(EL('r-sf-cm'), d.commit_pct || 0);
+  FILL(EL('r-sf-fill-cm'), d.commit_pct || 0);
+  TXT(EL('r-sv-pg'), fmtNum(d.pages_sec || 0) + '/s');
+  if (EL('r-paged')) EL('r-paged').textContent = fmtMem(d.paged_pool_mb || 0);
+  if (EL('r-nonpaged')) EL('r-nonpaged').textContent = fmtMem(d.non_paged_mb || 0);
+  TXT(EL('r-sv-priv'), fmtMem(d.private_mb || 0));
+  TXT(EL('r-sv-pgpool'), fmtMem(d.paged_pool_mb || 0) + ' (' + fmtNum(d.paged_pool_pct || 0) + '%)');
+  TXT(EL('r-sv-npgpool'), fmtMem(d.non_paged_mb || 0) + ' (' + fmtNum(d.non_paged_pct || 0) + '%)');
+  TXT(EL('r-sv-pf'), fmtMem(d.page_file_mb || 0) + ' used');
+  hideSkeleton('r-tbl-sk', 'r-tbl');
+
+  /* CPU page */
+  TXT(EL('c-sv-cpu'), fmtNum(d.cpu_pct) + '%');
+  COL(EL('c-sf-cpu'), d.cpu_pct || 0);
+  FILL(EL('c-sf-fill-cpu'), d.cpu_pct || 0);
+  TXT(EL('c-sv-pg'), fmtNum(d.pages_sec || 0) + '/s');
+  TXT(EL('c-queue'), fmtNum(d.disk_queue || 0));
+  hideSkeleton('c-tbl-sk', 'c-tbl');
+
+  /* Disks */
+  renderDrives(EL('ov-disks'), d.disks);
+  hideSkeleton('disk-drives-sk', 'disk-drives');
+  hideSkeleton('ov-disks-sk', 'ov-disks');
+
+  const diskIo = EL('disk-io-strip');
+  if (diskIo) {
+    diskIo.innerHTML = [
+      { label: 'Disk Read', val: fmtNum(d.disk_read_mb) + ' MB/s' },
+      { label: 'Disk Write', val: fmtNum(d.disk_write_mb) + ' MB/s' },
+      { label: 'Net Sent', val: fmtNum(d.net_sent_kb) + ' KB/s' },
+      { label: 'Net Recv', val: fmtNum(d.net_recv_kb) + ' KB/s' }
+    ].map(ioHtml).join('');
+    hideSkeleton('disk-io-sk', 'disk-io-strip');
+  }
+
+  const ovIo = EL('ov-io');
+  if (ovIo) {
+    ovIo.innerHTML = [
+      { label: 'Disk R/W', val: fmtNum(d.disk_read_mb) + ' / ' + fmtNum(d.disk_write_mb) + ' MB/s' },
+      { label: 'Net S/R', val: fmtNum(d.net_sent_kb) + ' / ' + fmtNum(d.net_recv_kb) + ' KB/s' }
+    ].map(ioHtml).join('');
+    hideSkeleton('ov-io-sk', 'ov-io');
+  }
+
+  /* GPU */
+  const gpu = d.gpu || {};
+  TXT(EL('g-avail'), gpu.available ? 'Yes' : 'No');
+  const gpuSection = EL('pg-gpu');
+  if (gpuSection) {
+    if (gpu && gpu.available) {
+      const eng = gpu.eng_type_totals || {};
+      TXT(EL('g-3d'), eng['3d'] !== undefined ? fmtNum(eng['3d']) + '%' : 'N/A');
+      TXT(EL('g-vdec'), eng['videodecode'] !== undefined ? fmtNum(eng['videodecode']) + '%' : 'N/A');
+      TXT(EL('g-venc'), eng['videoencode'] !== undefined ? fmtNum(eng['videoencode']) + '%' : 'N/A');
+      TXT(EL('g-copy'), eng['copy'] !== undefined ? fmtNum(eng['copy']) + '%' : 'N/A');
+    }
+  }
+  renderGPUAdapters(EL('gpu-adapters'), gpu);
+  hideSkeleton('gpu-adapters-sk', 'gpu-adapters');
+
+  /* Groups */
+  const groups = d.groups || {};
+  if (EL('grp-browser')) {
+    TXT(EL('grp-browser-val'), fmtMem(groups.browser ? groups.browser.ws_mb : 0));
+    TXT(EL('grp-browser-count'), (groups.browser ? groups.browser.count : 0) + ' processes');
+  }
+  if (EL('grp-dev')) {
+    TXT(EL('grp-dev-val'), fmtMem(groups.dev_tools ? groups.dev_tools.ws_mb : 0));
+    TXT(EL('grp-dev-count'), (groups.dev_tools ? groups.dev_tools.count : 0) + ' processes');
+  }
+  if (EL('grp-sec')) {
+    TXT(EL('grp-sec-val'), fmtMem(groups.security ? groups.security.ws_mb : 0));
+    TXT(EL('grp-sec-count'), (groups.security ? groups.security.count : 0) + ' processes');
+  }
+  const gi = EL('group-insights');
+  if (gi) {
+    const items = [];
+    if (groups.browser) items.push('Browser: ' + fmtMem(groups.browser.ws_mb) + ' (' + groups.browser.count + ' tabs)');
+    if (groups.dev_tools) items.push('Dev Tools: ' + fmtMem(groups.dev_tools.ws_mb) + ' (' + groups.dev_tools.count + ' tools)');
+    if (groups.security) items.push('Security: ' + fmtMem(groups.security.ws_mb) + ' (' + groups.security.count + ' services)');
+    gi.innerHTML = items.length ? items.map(t => '<div class="insight">' + esc(t) + '</div>').join('') : '<div class="note" style="padding:6px 0">No group activity detected.</div>';
+    hideSkeleton('group-insights-sk', 'group-insights');
+  }
+
+  /* System */
+  const sysSummary = EL('sys-summary');
+  if (sysSummary) {
+    sysSummary.innerHTML = [
+      ['Hostname', esc(d.hostname) || '—'],
+      ['OS', esc(d.os_caption) || '—'],
+      ['Total Processes', d.total_procs || 0],
+      ['RAM Total', fmtMem(d.ram_total_gb * 1024)],
+      ['Commit Limit', fmtMem(d.limit_gb * 1024)]
+    ].map(([k, v]) => '<div class="sys-row"><span>' + k + '</span><span>' + v + '</span></div>').join('');
+    hideSkeleton('sys-summary-sk', 'sys-summary');
+  }
+
+  /* Throttled tables */
+  if (doTables) {
+    const topRamData = (d.top_ram || []).slice(0, 20);
+    renderTable(EL('ov-tbl'), topRamData.map(p => [p.name || '?', p.pid || 0, fmtMem(p.ws_mb), fmtNum(p.cpu_s, 1) + 's']), ['Name', 'PID', 'WS', 'CPU'], { actions: true, processData: topRamData });
+    hideSkeleton('ov-tbl-sk', 'ov-tbl');
+
+    const topPrivData = (d.top_private || []).slice(0, 20);
+    renderTable(EL('r-tbl'), topPrivData.map(p => [p.name || '?', p.pid || 0, fmtMem(p.ws_mb), fmtMem(p.private_mb)]), ['Name', 'PID', 'WS', 'Private'], { actions: true, processData: topPrivData });
+    hideSkeleton('r-tbl-sk', 'r-tbl');
+
+    const topCpuData = (d.top_cpu || []).slice(0, 20);
+    renderTable(EL('c-tbl'), topCpuData.map(p => [p.name || '?', p.pid || 0, fmtNum(p.cpu_s, 1) + 's', fmtMem(p.ws_mb)]), ['Name', 'PID', 'CPU Time', 'WS'], { actions: true, processData: topCpuData });
+    hideSkeleton('c-tbl-sk', 'c-tbl');
+
+    const susData = (d.suspicious || []).slice(0, 30);
+    renderTable(EL('sus-tbl'), susData.map(p => [p.name || '?', p.pid || 0, fmtMem(p.ws_mb), p.command_line ? 'Yes' : 'No']), ['Name', 'PID', 'WS', 'CLI?'], { actions: true, processData: susData });
+    hideSkeleton('sus-tbl-sk', 'sus-tbl');
+
+    const svcData = (d.heavy_services || []).slice(0, 25);
+    renderTable(EL('svc-tbl'), svcData.map(s => [s.display_name || s.name || '?', s.name || '?', s.state || '?', s.start_mode || '?', s.pid || 0, fmtMem((d.top_ram || []).find(p => p.pid == s.pid)?.ws_mb || 0)]), ['Display Name', 'Name', 'State', 'Start', 'PID', 'WS'], {});
+    hideSkeleton('svc-tbl-sk', 'svc-tbl');
+
+    /* System page */
+    renderDrives(EL('disk-drives'), d.disks);
+
+    const startupData = (d.startup || []).slice(0, 20);
+    renderTable(EL('startup-tbl'), startupData.map(s => [s.name || '?', s.command || '?', s.location || '?']), ['Name', 'Command', 'Location'], {});
+    hideSkeleton('startup-tbl-sk', 'startup-tbl');
+
+    const pfData = (d.pagefile || []).slice(0, 5);
+    renderTable(EL('pagefile-tbl'), pfData.map(p => [p.name || '?', fmtMem(p.allocated_mb), fmtMem(p.current_usage_mb), fmtMem(p.peak_usage_mb)]), ['Name', 'Allocated MB', 'Current MB', 'Peak MB'], {});
+    hideSkeleton('pagefile-tbl-sk', 'pagefile-tbl');
+
+    const profiles = (d.ps_profiles || []);
+    renderTable(EL('profiles-tbl'), profiles.map(p => [p.path || '?', p.size_kb ? fmtMem(p.size_kb) : '?']), ['Profile Path', 'Size'], {});
+    hideSkeleton('profiles-tbl-sk', 'profiles-tbl');
+
+    /* All Processes */
+    const allProcs = (d.all_processes || []).slice(0, 100);
+    renderTable(EL('all-tbl'), allProcs.map(p => [p.name || '?', p.pid || 0, fmtMem(p.ws_mb), fmtNum(p.cpu_s, 1) + 's', p.threads || 0, p.handles || 0]), ['Name', 'PID', 'WS', 'CPU', 'Threads', 'Handles'], { actions: true, processData: allProcs });
+    hideSkeleton('all-tbl-sk', 'all-tbl');
+
+    /* Insights */
+    const insEl = EL('insights-list');
+    if (insEl) {
+      insEl.innerHTML = (d.insights || []).map(t => '<div class="insight">' + esc(t) + '</div>').join('');
+      if (!d.insights || d.insights.length === 0) insEl.innerHTML = '<div class="note" style="padding:6px 0">No insights yet.</div>';
+    }
+  }
+
+  /* Error banner */
+  const psErrEl = EL('ps-errors');
+  if (psErrEl) {
+    if (d.error_count > 0) psErrEl.innerHTML = '<div class="err-banner">PowerShell errors: ' + d.error_count + ' | <a href="/logs" target="_blank" rel="noopener">View logs</a> | <a href="/debug" target="_blank" rel="noopener">Debug</a></div>';
+    else psErrEl.innerHTML = '';
+  }
+}
+
+/* ── Debug panel ─────────────────────────────────────────────────── */
+function updateDebugPanel(data) {
+  const dbgFetch = EL('dbg-fetch');
+  const dbgRender = EL('dbg-render');
+  const dbgCycle = EL('dbg-cycle');
+  const dbgFps = EL('dbg-fps');
+  const dbgMem = EL('dbg-mem');
+
+  if (dbgFetch) {
+    const fc = PCM.perf.fetchMs < 500 ? 'ok' : PCM.perf.fetchMs < 2000 ? 'warn' : 'bad';
+    dbgFetch.textContent = data && data._loading ? 'waiting...' : PCM.perf.fetchMs.toFixed(1) + ' ms';
+    dbgFetch.className = 'sval ' + (data && data._loading ? 'warn' : fc);
+    COL(EL('dbg-sc-fetch'), data && data._loading ? 50 : PCM.perf.fetchMs > 2000 ? 90 : PCM.perf.fetchMs > 500 ? 50 : 10);
+  }
+  if (dbgRender) {
+    const rc = PCM.perf.renderMs < 50 ? 'ok' : PCM.perf.renderMs < 200 ? 'warn' : 'bad';
+    dbgRender.textContent = PCM.perf.renderMs.toFixed(1) + ' ms';
+    dbgRender.className = 'sval ' + rc;
+    COL(EL('dbg-sc-render'), PCM.perf.renderMs > 200 ? 90 : PCM.perf.renderMs > 50 ? 50 : 10);
+  }
+  if (dbgCycle) {
+    const cc = PCM.perf.cycleMs < 2000 ? 'ok' : PCM.perf.cycleMs < 5000 ? 'warn' : 'bad';
+    dbgCycle.textContent = PCM.perf.cycleMs.toFixed(1) + ' ms';
+    dbgCycle.className = 'sval ' + cc;
+    COL(EL('dbg-sc-cycle'), PCM.perf.cycleMs > 5000 ? 90 : PCM.perf.cycleMs > 2000 ? 50 : 10);
+  }
+  if (dbgFps) {
+    const fps = PCM.perf.fps;
+    const fc = fps >= 55 ? 'ok' : fps >= 30 ? 'warn' : 'bad';
+    dbgFps.textContent = fps + ' fps';
+    dbgFps.className = 'sval ' + fc;
+    COL(EL('dbg-sc-fps'), fps < 30 ? 90 : fps < 55 ? 50 : 10);
+  }
+
+  if (dbgMem) {
+    const mem = performance.memory ? {
+      used: (performance.memory.usedJSHeapSize / 1048576).toFixed(0),
+      total: (performance.memory.totalJSHeapSize / 1048576).toFixed(0),
+      limit: (performance.memory.jsHeapSizeLimit / 1048576).toFixed(0)
+    } : null;
+    dbgMem.innerHTML = mem
+      ? '<div class="sys-row"><span>JS Heap Used</span><span>' + mem.used + ' MB</span></div><div class="sys-row"><span>JS Heap Total</span><span>' + mem.total + ' MB</span></div><div class="sys-row"><span>JS Heap Limit</span><span>' + mem.limit + ' MB</span></div><div class="sys-row"><span>Utilization</span><span>' + Math.round(mem.used / mem.limit * 100) + '%</span></div>'
+      : '<div class="note">Memory API not available (Chrome only)</div>';
+    hideSkeleton('dbg-mem-sk', 'dbg-mem');
+  }
+
+  const isLoading = data && data._loading;
+  const dbgTl = EL('dbg-timeline');
+  if (dbgTl) {
+    const connIcons = { websocket: '⚡', sse: '🔌', http: '🔄' };
+    dbgTl.innerHTML = '' +
+      '<div class="sys-row"><span>Status</span><span style="color:' + (isLoading ? 'var(--warn)' : 'var(--ok)') + '">' + (isLoading ? 'Collecting data...' : 'Live') + '</span></div>' +
+      '<div class="sys-row"><span>Connection</span><span>' + (connIcons[PCM.connectionMethod] || '?') + ' ' + PCM.connectionMethod + '</span></div>' +
+      '<div class="sys-row"><span>Refresh</span><span>' + PCM.refreshInterval + 'ms</span></div>' +
+      '<div class="sys-row"><span>Table Update</span><span>' + PCM.TABLE_UPDATE_INTERVAL + 'ms</span></div>' +
+      '<div class="sys-row"><span>Data Age</span><span>' + (PCM.cachedData && !isLoading ? ((Date.now() - PCM.perfTimer) / 1000).toFixed(1) + 's ago' : '—') + '</span></div>' +
+      '<div class="sys-row"><span>Processes</span><span>' + (data ? data.total_procs : '—') + '</span></div>' +
+      '<div class="sys-row"><span>DOM Nodes</span><span>' + document.querySelectorAll('*').length + '</span></div>';
+    hideSkeleton('dbg-timeline-sk', 'dbg-timeline');
+  }
+
+  const dbgSys = EL('dbg-sys-metrics');
+  if (dbgSys && data) {
+    dbgSys.innerHTML = isLoading
+      ? '<div class="note">Waiting for data collection...</div>'
+      : '<div class="sys-row"><span>RAM Usage</span><span>' + fmtNum(data.ram_pct) + '% (' + data.ram_used_gb + ' GB / ' + data.ram_total_gb + ' GB)</span></div>' +
+        '<div class="sys-row"><span>CPU</span><span>' + fmtNum(data.cpu_pct) + '%</span></div>' +
+        '<div class="sys-row"><span>Commit</span><span>' + fmtNum(data.commit_pct) + '% (' + data.commit_gb + ' GB)</span></div>' +
+        '<div class="sys-row"><span>GPU 3D</span><span>' + (data.gpu && data.gpu.available ? fmtNum(data.gpu.eng_type_totals['3d']) + '%' : 'N/A') + '</span></div>' +
+        '<div class="sys-row"><span>Pages/sec</span><span>' + fmtNum(data.pages_sec || 0) + '</span></div>' +
+        '<div class="sys-row"><span>Non-Paged Pool</span><span>' + fmtMem(data.non_paged_mb || 0) + '</span></div>' +
+        '<div class="sys-row"><span>Perf (BE)</span><span>' + (data._perf_ms ? data._perf_ms + ' ms' : '—') + '</span></div>';
+    hideSkeleton('dbg-sys-metrics-sk', 'dbg-sys-metrics');
+  }
+
+  const dbgCache = EL('dbg-cache');
+  if (dbgCache) {
+    const connIcons = { websocket: '⚡', sse: '🔌', http: '🔄' };
+    const connLabels = { websocket: 'WS Connected', sse: 'SSE Connected', http: 'HTTP Polling' };
+    const connColor = PCM.connectionMethod === 'websocket' || PCM.connectionMethod === 'sse' ? 'var(--ok)' : 'var(--warn)';
+    dbgCache.innerHTML = '' +
+      '<div class="sys-row"><span>Status</span><span style="color:' + (isLoading || PCM.pollInFlight ? 'var(--warn)' : 'var(--ok)') + '">' + (isLoading || PCM.pollInFlight ? 'Collecting...' : 'Ready') + '</span></div>' +
+      '<div class="sys-row"><span>Connection</span><span style="color:' + connColor + '">' + (connIcons[PCM.connectionMethod] || '?') + ' ' + (connLabels[PCM.connectionMethod] || PCM.connectionMethod) + '</span></div>' +
+      '<div class="sys-row"><span>Refresh</span><span>' + PCM.refreshInterval + 'ms</span></div>';
+    hideSkeleton('dbg-cache-sk', 'dbg-cache');
+  }
+
+  const dbgErrCount = EL('js-err-count');
+  const dbgErrList = EL('js-errors');
+  const dbgPsErrs = EL('dbg-ps-errs');
+  if (dbgErrCount) dbgErrCount.textContent = PCM.errors.length;
+  if (dbgErrList) {
+    if (PCM.errors.length === 0) dbgErrList.innerHTML = '<div class="note">No errors detected</div>';
+    else dbgErrList.innerHTML = PCM.errors.slice(-20).reverse().map(e => {
+      const d = new Date(e.ts);
+      const time = d.toLocaleTimeString();
+      const info = e.line ? ' at ' + (e.src || '') + ':' + e.line : '';
+      return '<div class="err-entry ' + (e.type || 'error') + '"><span class="err-time">' + time + '</span><span class="err-type">' + (e.type || 'ERROR').toUpperCase() + '</span><span class="err-msg">' + esc(e.msg) + info + '</span></div>';
+    }).join('');
+  }
+  if (dbgPsErrs) {
+    const psErrBanner = EL('ps-errors');
+    if (psErrBanner && psErrBanner.textContent) dbgPsErrs.innerHTML = psErrBanner.textContent;
+  }
+}
+
+/* ── FPS tracking ───────────────────────────────────────────────── */
+function trackFPS(ts) {
+  PCM.perf.fpsFrames++;
+  if (ts - PCM.perf.fpsLast >= 1000) {
+    PCM.perf.fps = PCM.perf.fpsFrames;
+    PCM.perf.fpsFrames = 0;
+    PCM.perf.fpsLast = ts;
+  }
+  requestAnimationFrame(trackFPS);
+}
+requestAnimationFrame(trackFPS);
+
+/* ── Tabs ────────────────────────────────────────────────────────── */
+function initTabs() {
+  const tabs = document.querySelectorAll('.ntab');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('on'));
+      tab.classList.add('on');
+      document.querySelectorAll('.pg').forEach(p => p.classList.remove('on'));
+      const target = document.getElementById('pg-' + tab.dataset.page);
+      if (target) target.classList.add('on');
+      if (tab.dataset.page === 'debug' && PCM.cachedData) updateDebugPanel(PCM.cachedData);
+      setTimeout(() => refreshSparklines(PCM.history.cpu.slice(-1)[0] || 0, PCM.history.ram.slice(-1)[0] || 0, PCM.history.disk.slice(-1)[0] || 0), 50);
+    });
+  });
+}
+
+/* ── Refresh selector ────────────────────────────────────────────── */
+function updateSettingsConnInfo() {
+  const statusEl = EL('set-conn-status');
+  const methodEl = EL('set-conn-method');
+  const refreshEl = EL('set-refresh-val');
+  const latencyEl = EL('set-latency');
+  const connLabels = { websocket: '⚡ WebSocket (Fastest)', sse: '🔌 SSE (Fast)', http: '🔄 HTTP Polling' };
+  const isConnected = (PCM.eventSource && PCM.eventSource.readyState === EventSource.OPEN) || (PCM.wsSocket && PCM.wsSocket.readyState === WebSocket.OPEN);
+  if (statusEl) statusEl.textContent = isConnected ? 'Connected' : 'Disconnected';
+  if (methodEl) methodEl.textContent = connLabels[PCM.connectionMethod] || PCM.connectionMethod;
+  if (refreshEl) refreshEl.textContent = PCM.refreshInterval + ' ms';
+  if (latencyEl) latencyEl.textContent = PCM.perf.fetchMs > 0 ? PCM.perf.fetchMs.toFixed(1) + ' ms' : '—';
+  const methodDisplayEl = EL('method-display');
+  if (methodDisplayEl) methodDisplayEl.textContent = (connLabels[PCM.connectionMethod] || PCM.connectionMethod);
+}
+
+function initRefreshSelector() {
+  const sel = EL('rf-sel');
+  const settingsSel = EL('rf-sel-settings');
+  if (!sel) return;
+
+  const updateRefresh = (rate) => {
+    PCM.refreshInterval = rate;
+    try {
+      fetch('/api/refresh-rate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshRate: rate })
+      }).catch(() => {});
+    } catch (e) {}
+    updateSettingsConnInfo();
+  };
+
+  sel.addEventListener('change', () => {
+    const rate = Math.min(10000, Math.max(500, parseInt(sel.value, 10) || 500));
+    updateRefresh(rate);
+  });
+
+  if (settingsSel) {
+    settingsSel.addEventListener('change', () => {
+      if (sel) sel.value = settingsSel.value;
+      const rate = Math.min(10000, Math.max(500, parseInt(settingsSel.value, 10) || 500));
+      updateRefresh(rate);
+    });
+  }
+}
+
+/* ── Search filters ──────────────────────────────────────────────── */
+function initSearchFilters() {
+  const procsSearch = EL('procs-search');
+  if (procsSearch) {
+    procsSearch.addEventListener('input', () => {
+      const q = procsSearch.value.toLowerCase();
+      const rows = EL('all-tbl')?.querySelectorAll('tbody tr') || [];
+      rows.forEach(tr => {
+        const name = (tr.cells[0]?.textContent || '').toLowerCase();
+        tr.style.display = name.includes(q) ? '' : 'none';
+      });
+    });
+  }
+}
+
+/* ── Snapshots ──────────────────────────────────────────────────── */
+function initSnapshots() {
+  renderSnapshots();
+  const saveBtn = EL('btn-save-snap');
+  if (saveBtn) saveBtn.addEventListener('click', async () => {
+    const label = prompt('Snapshot label (optional):', '');
+    if (label === null) return;
+    try {
+      await fetch('/api/snapshots', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label })
+      });
+      renderSnapshots();
+    } catch (e) { alert('Failed to save snapshot'); }
+  });
+}
+
+async function renderSnapshots() {
+  const sk = EL('snapshots-tbl-sk');
+  const tbl = EL('snapshots-tbl');
+  if (sk) sk.style.display = 'none';
+  if (!tbl) return;
+  tbl.style.display = '';
+  const snapshots = await fetchSnapshots();
+  if (!snapshots || snapshots.length === 0) {
+    tbl.innerHTML = '<tbody><tr><td colspan="5"><div class="note">No snapshots yet. Click Save Snapshot to create one.</div></td></tr></tbody>';
+    return;
+  }
+  let html = '<tbody>';
+  snapshots.forEach(s => {
+    const escapedId = s.id ? s.id.replace(/'/g, "\\'") : '';
+    html += '<tr>' +
+      '<td>' + esc(s.ts) + '</td>' +
+      '<td>' + esc(s.label || '') + '</td>' +
+      '<td><button class="btn-sm" onclick="compareSnapshot(\'' + escapedId + '\')">Compare</button></td>' +
+      '<td><button class="btn-sm" onclick="exportSnapshot(\'' + escapedId + '\',\'json\')">JSON</button>' +
+          '<button class="btn-sm" onclick="exportSnapshot(\'' + escapedId + '\',\'csv\')">CSV</button></td>' +
+      '<td><button class="btn-sm btn-danger" onclick="deleteSnapshot(\'' + escapedId + '\')">X</button></td>' +
+      '</tr>';
+  });
+  html += '</tbody>';
+  tbl.innerHTML = html;
+}
+
+/* ── Thresholds ──────────────────────────────────────────────────── */
+const THRESHOLD_DEFS = [
+  { key: 'ram_pct', label: 'RAM Usage %', min: 0, max: 100 },
+  { key: 'cpu_pct', label: 'CPU Usage %', min: 0, max: 100 },
+  { key: 'commit_pct', label: 'Commit Charge %', min: 0, max: 100 },
+  { key: 'pages_sec', label: 'Pages/sec', min: 0, max: 10000 },
+  { key: 'non_paged_mb', label: 'Non-Paged Pool MB', min: 0, max: 10000 },
+  { key: 'disk_pct', label: 'Disk Usage %', min: 0, max: 100 }
+];
+
+function renderThresholds() {
+  const container = EL('thresholds-form');
+  if (!container) return;
+  container.innerHTML = THRESHOLD_DEFS.map(t =>
+    '<div class="threshold-row"><label>' + esc(t.label) + '</label><input type="number" data-key="' + t.key + '" value="' + (PCM.thresholds[t.key] || 0) + '" min="' + t.min + '" max="' + t.max + '"></div>'
+  ).join('');
+}
+
+async function saveThresholdsFromForm() {
+  const container = EL('thresholds-form');
+  const msgEl = EL('thresholds-msg');
+  const saveBtn = EL('btn-save-thresholds');
+  if (!container) return;
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
+  const thresholds = {};
+  container.querySelectorAll('input[data-key]').forEach(input => { thresholds[input.dataset.key] = parseFloat(input.value) || 0; });
+  const ok = await saveThresholds(thresholds);
+  if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Thresholds'; }
+  if (msgEl) {
+    msgEl.textContent = ok ? 'Saved!' : 'Error saving';
+    msgEl.style.color = ok ? 'var(--ok)' : 'var(--bad)';
+    setTimeout(() => { if (msgEl) msgEl.textContent = ''; }, 2000);
+  }
+}
+
+function initThresholds() { renderThresholds(); const saveBtn = EL('btn-save-thresholds'); if (saveBtn) saveBtn.addEventListener('click', saveThresholdsFromForm); }
+
+/* ── Report ──────────────────────────────────────────────────────── */
+function initReportButtons() {
+  const openBtn = EL('btn-open-report');
+  if (openBtn) openBtn.addEventListener('click', async () => {
+    const report = await fetchReport();
+    const win = window.open('', '_blank');
+    if (win) { win.document.write(report); win.document.close(); }
+  });
+  const dlBtn = EL('btn-dl-report');
+  if (dlBtn) dlBtn.addEventListener('click', fetchReportDownload);
+  const compareBtn = EL('btn-compare-snap');
+  if (compareBtn) compareBtn.addEventListener('click', () => { const id = prompt('Enter snapshot ID to compare:'); if (id) compareSnapshot(id); });
+}
+
+async function compareSnapshot(id) {
+  const resultEl = EL('compare-result');
+  if (resultEl) resultEl.innerHTML = '<div class="note">Comparing...</div>';
+  try {
+    const data = await compareSnapshots(id);
+    if (resultEl) {
+      if (data.error) { resultEl.innerHTML = '<div class="note" style="color:var(--bad)">' + esc(data.error) + '</div>'; return; }
+      if (!data.changes || data.changes.length === 0) { resultEl.innerHTML = '<div class="note">No changes detected.</div>'; return; }
+      let html = '<div class="compare-summary"><strong>Snapshot:</strong> ' + esc(data.snapshot_ts) + ' → <strong>Now:</strong> ' + esc(data.current_ts) + '</div>';
+      data.changes.forEach(c => {
+        const color = c.new > c.old ? 'var(--bad)' : c.new < c.old ? 'var(--ok)' : 'var(--dim)';
+        const diff = c.old !== undefined && c.new !== undefined ? (c.new - c.old).toFixed(1) : '';
+        let extra = '';
+        if (c.name === 'Top RAM Process' && c.processes) extra = '<div class="compare-procs">' + c.processes.slice(0, 5).map(p => '<span>' + esc(p.name) + ' (' + fmtMem(p.ws_mb) + ')</span>').join('') + (c.count > 5 ? '<span>+' + (c.count - 5) + ' more</span>' : '') + '</div>';
+        html += '<div class="compare-item"><span class="compare-name">' + esc(c.name) + '</span><span class="compare-diff" style="color:' + color + '">' + diff + (c.old !== undefined ? ' (' + c.old + '→' + c.new + '%)' : '') + '</span>' + extra + '</div>';
+      });
+      resultEl.innerHTML = html;
+    }
+  } catch (e) { if (resultEl) resultEl.innerHTML = '<div class="note" style="color:var(--bad)">Error comparing snapshot</div>'; }
+}
+
+/* ── Resize ──────────────────────────────────────────────────────── */
+window.addEventListener('resize', () => {
+  clearTimeout(PCM.resizeTimer);
+  PCM.resizeTimer = setTimeout(() => {
+    refreshSparklines(PCM.history.cpu.slice(-1)[0] || 0, PCM.history.ram.slice(-1)[0] || 0, PCM.history.disk.slice(-1)[0] || 0);
+  }, 100);
+});
+
+/* ── Expose globals ─────────────────────────────────────────────── */
+window.killProcess = killProcess;
+window.suspendProcess = suspendProcess;
+window.resumeProcess = resumeProcess;
+window.copyTableToClipboard = copyTableToClipboard;
+window.compareSnapshot = compareSnapshot;
+window.exportSnapshot = exportSnapshot;
+window.deleteSnapshot = deleteSnapshot;
+
+/* ── Boot ────────────────────────────────────────────────────────── */
+async function start() {
+  await loadBootstrap();
+  initTabs();
+  initRefreshSelector();
+  initSearchFilters();
+  initSnapshots();
+  initThresholds();
+  initReportButtons();
+  initStream();
+}
+
+document.readyState === 'loading'
+  ? document.addEventListener('DOMContentLoaded', start)
+  : start();
+
+</script>
 </body>
 </html>

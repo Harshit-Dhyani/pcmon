@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>PC Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────────────── -->
+<header class="hdr">
+  <div class="hdr-left">
+    <div class="pip"></div>
+    <div class="hdr-logo">PC&nbsp;<em>Monitor</em></div>
+    <div class="host-badge" id="hdr-host">—</div>
+  </div>
+  <div class="hdr-right">
+    <div class="route-links">
+      <a href="/data" target="_blank" rel="noopener" title="/data">data</a>
+      <a href="/health" target="_blank" rel="noopener" title="/health">health</a>
+      <a href="/errors" target="_blank" rel="noopener" title="/errors">errors</a>
+      <a href="/debug" target="_blank" rel="noopener" title="/debug">debug</a>
+      <a href="/logs" target="_blank" rel="noopener" title="/logs">logs</a>
+    </div>
+    <span class="rf-lbl">Refresh</span>
+    <select class="rf-sel" id="rf-sel">
+      <option value="500" selected>500 ms</option>
+      <option value="1000">1 s</option>
+      <option value="2000">2 s</option>
+      <option value="5000">5 s</option>
+      <option value="10000">10 s</option>
+    </select>
+    <div class="ts" id="ts">--:--:--</div>
+  </div>
+</header>
+
+<!-- ── Nav ────────────────────────────────────────────────────────── -->
+<nav class="nav">
+  <div class="ntab on" data-page="overview">Overview</div>
+  <div class="ntab" data-page="ram">RAM</div>
+  <div class="ntab" data-page="cpu">CPU</div>
+  <div class="ntab" data-page="disk">Disk &amp; I/O</div>
+  <div class="ntab" data-page="gpu">GPU</div>
+  <div class="ntab" data-page="groups">Groups</div>
+  <div class="ntab" data-page="suspicious">Suspicious</div>
+  <div class="ntab" data-page="services">Services</div>
+  <div class="ntab" data-page="system">System</div>
+  <div class="ntab" data-page="procs">All Processes</div>
+  <div class="ntab" data-page="snapshots">Snapshots</div>
+  <div class="ntab" data-page="debug">Debug</div>
+  <div class="ntab" data-page="settings">⚙ Settings</div>
+</nav>
+
+<!-- ── Alerts ─────────────────────────────────────────────────────── -->
+<div class="alerts">
+  <div class="al al-bad"  id="al-pg"><span>⚠</span><span>Page faults spiking —&nbsp;<span id="al-pg-t"></span>/s. Possible memory pressure.</span></div>
+  <div class="al al-warn" id="al-cm"><span>⚠</span><span>Commit charge high —&nbsp;<span id="al-cm-t"></span>%. System may be over-committed.</span></div>
+  <div class="al al-warn" id="al-np"><span>⚠</span><span>Non-paged pool elevated —&nbsp;<span id="al-np-t"></span>&nbsp;MB. Possible driver leak.</span></div>
+  <div class="al al-warn" id="al-gpu"><span>⚠</span><span>GPU 3D engine heavy —&nbsp;<span id="al-gpu-t"></span>%.</span></div>
+</div>
+
+<!-- ── Pages ──────────────────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- ── OVERVIEW ─────────────────────────────────────────────────── -->
+  <div id="pg-overview" class="pg on">
+    <div class="strip">
+
+      <!-- RAM card -->
+      <div class="scard loading" id="sc-ram">
+        <div class="scard-top">
+          <span class="scard-lbl">RAM</span>
+          <span class="sbadge" id="sb-ram"></span>
+        </div>
+        <div class="sk sk-val"></div>
+        <div class="sk sk-sub"></div>
+        <div class="sval" id="sv-ram">—<span class="strend" id="sv-ram-trend"></span></div>
+        <div class="ssub" id="ss-ram">—</div>
+        <div class="strack"><div class="sfill" id="sf-ram"></div></div>
+        <div class="sk sk-spark"></div>
+        <canvas class="spark" id="spk-ram"></canvas>
+      </div>
+
+      <!-- CPU card -->
+      <div class="scard loading" id="sc-cpu">
+        <div class="scard-top">
+          <span class="scard-lbl">CPU</span>
+          <span class="sbadge" id="sb-cpu"></span>
+        </div>
+        <div class="sk sk-val"></div>
+        <div class="sk sk-sub"></div>
+        <div class="sval" id="sv-cpu">—<span class="strend" id="sv-cpu-trend"></span></div>
+        <div class="ssub">All logical cores</div>
+        <div class="strack"><div class="sfill" id="sf-cpu"></div></div>
+        <div class="sk sk-spark"></div>
+        <canvas class="spark" id="spk-cpu"></canvas>
+      </div>
+
+      <!-- Disk card -->
+      <div class="scard loading" id="sc-disk">
+        <div class="scard-top">
+          <span class="scard-lbl">Disk</span>
+          <span class="sbadge" id="sb-disk"></span>
+        </div>
+        <div class="sk sk-val"></div>
+        <div class="sk sk-sub"></div>
+        <div class="sval" id="sv-disk">—<span class="strend" id="sv-disk-trend"></span></div>
+        <div class="ssub" id="ss-disk">—</div>
+        <div class="strack"><div class="sfill" id="sf-disk"></div></div>
+        <div class="sk sk-spark"></div>
+        <canvas class="spark" id="spk-disk"></canvas>
+      </div>
+
+      <!-- Commit card -->
+      <div class="scard loading" id="sc-cm">
+        <div class="scard-top">
+          <span class="scard-lbl">Commit</span>
+          <span class="sbadge" id="sb-cm"></span>
+        </div>
+        <div class="sk sk-val"></div>
+        <div class="sk sk-sub"></div>
+        <div class="sval" id="sv-cm">—<span class="strend" id="sv-cm-trend"></span></div>
+        <div class="ssub" id="ss-cm">—</div>
+        <div class="strack"><div class="sfill" id="sf-cm"></div></div>
+        <div class="sk sk-spark"></div>
+        <canvas class="spark" id="spk-cm"></canvas>
+      </div>
+
+    </div><!-- /strip -->
+
+    <div class="grid2">
+      <!-- Top processes -->
+      <div class="pnl">
+        <div class="pnl-head">
+          <span class="pnl-title">Top Processes — RAM</span>
+          <span class="pnl-badge" id="ov-pc">
+            <span class="sk sk-badge" style="display:inline-block;width:70px;height:16px"></span>
+          </span>
+          <button class="btn-sm" onclick="copyTableToClipboard('ov-tbl')">Copy</button>
+        </div>
+        <div class="tbl-scroll" id="ov-tbl-wrap">
+          <!-- Skeleton rows -->
+          <div style="padding:10px 14px;display:flex;flex-direction:column;gap:6px" id="ov-tbl-sk">
+            <div class="sk sk-row"></div><div class="sk sk-row"></div>
+            <div class="sk sk-row"></div><div class="sk sk-row"></div>
+            <div class="sk sk-row"></div>
+          </div>
+          <table id="ov-tbl" style="display:none"></table>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <!-- Disk drives -->
+        <div class="pnl">
+          <div class="pnl-head"><span class="pnl-title">Disk Drives</span></div>
+          <div class="pnl-body" id="ov-disks-wrap">
+            <div id="ov-disks-sk">
+              <div class="sk sk-row"></div>
+              <div class="sk sk-row" style="margin-top:6px"></div>
+            </div>
+            <div id="ov-disks" style="display:none"></div>
+          </div>
+        </div>
+        <!-- I/O -->
+        <div class="pnl">
+          <div class="pnl-head"><span class="pnl-title">I/O &amp; Network</span></div>
+          <div class="pnl-body" id="ov-io-wrap">
+            <div id="ov-io-sk" class="io-strip">
+              <div class="sk" style="height:52px;border-radius:8px"></div>
+              <div class="sk" style="height:52px;border-radius:8px"></div>
+            </div>
+            <div class="io-strip" id="ov-io" style="display:none"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── RAM ──────────────────────────────────────────────────────── -->
+  <div id="pg-ram" class="pg">
+    <div class="strip">
+      <div class="scard loading" id="r-sc-ram">
+        <div class="scard-top"><span class="scard-lbl">RAM In Use</span><span class="sbadge" id="r-sb-ram"></span></div>
+        <div class="sk sk-val"></div><div class="sk sk-sub"></div>
+        <div class="sval" id="r-sv-ram">—</div>
+        <div class="ssub" id="r-ss-ram">—</div>
+        <div class="strack"><div class="sfill" id="r-sf-ram"></div></div>
+      </div>
+      <div class="scard ok">
+        <div class="scard-top"><span class="scard-lbl">Available</span></div>
+        <div class="sval ok" id="r-avail">—</div>
+        <div class="ssub">MB free physical RAM</div>
+      </div>
+      <div class="scard loading" id="r-sc-cm">
+        <div class="scard-top"><span class="scard-lbl">Commit Charge</span><span class="sbadge" id="r-sb-cm"></span></div>
+        <div class="sk sk-val"></div><div class="sk sk-sub"></div>
+        <div class="sval" id="r-sv-cm">—</div>
+        <div class="ssub" id="r-ss-cm">—</div>
+        <div class="strack"><div class="sfill" id="r-sf-cm"></div></div>
+      </div>
+      <div class="scard loading" id="r-sc-pg">
+        <div class="scard-top"><span class="scard-lbl">Pages / sec</span></div>
+        <div class="sk sk-val"></div><div class="sk sk-sub"></div>
+        <div class="sval" id="r-sv-pg">—</div>
+        <div class="ssub" id="r-ss-pg">—</div>
+      </div>
+    </div>
+
+    <div class="pool-grid">
+      <div class="pool-card">
+        <div class="pool-lbl">Paged Pool</div>
+        <div class="pool-val" id="r-paged">—</div>
+        <div class="pool-desc">Kernel memory that can page to disk.</div>
+      </div>
+      <div class="pool-card">
+        <div class="pool-lbl">Non-Paged Pool</div>
+        <div class="pool-val" id="r-nonpaged">—</div>
+        <div class="pool-desc">Cannot be paged. Growing = driver leak.</div>
+      </div>
+    </div>
+
+    <div class="pnl">
+      <div class="pnl-head">
+        <span class="pnl-title">Top 30 by Private Memory</span>
+        <input class="sbar" id="s-ram" placeholder="Filter processes…">
+        <button class="btn-sm" onclick="copyTableToClipboard('r-tbl')">Copy</button>
+      </div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="r-tbl-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+        </div>
+        <table id="r-tbl" style="display:none"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CPU ──────────────────────────────────────────────────────── -->
+  <div id="pg-cpu" class="pg">
+    <div class="strip">
+      <div class="scard loading" id="c-sc-cpu" style="grid-column:span 2">
+        <div class="scard-top"><span class="scard-lbl">CPU Total</span><span class="sbadge" id="c-sb-cpu"></span></div>
+        <div class="sk sk-val"></div><div class="sk sk-sub"></div>
+        <div class="sval" id="c-sv-cpu">—</div>
+        <div class="ssub">All logical cores combined</div>
+        <div class="strack"><div class="sfill" id="c-sf-cpu"></div></div>
+        <canvas class="spark" id="spk-cpu2"></canvas>
+      </div>
+      <div class="scard loading" id="c-sc-pg">
+        <div class="scard-top"><span class="scard-lbl">Pages / sec</span></div>
+        <div class="sk sk-val"></div><div class="sk sk-sub"></div>
+        <div class="sval" id="c-sv-pg">—</div>
+        <div class="ssub">RAM-to-disk swap load</div>
+      </div>
+      <div class="scard ok">
+        <div class="scard-top"><span class="scard-lbl">Disk Queue</span></div>
+        <div class="sval ok" id="c-queue">—</div>
+        <div class="ssub">Pending I/O requests</div>
+      </div>
+    </div>
+
+    <div class="pnl">
+      <div class="pnl-head"><span class="pnl-title">Top 20 by CPU Time</span><button class="btn-sm" onclick="copyTableToClipboard('c-tbl')">Copy</button></div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="c-tbl-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="c-tbl" style="display:none"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DISK & I/O ────────────────────────────────────────────────── -->
+  <div id="pg-disk" class="pg">
+    <div id="disk-io-wrap" style="margin-bottom:16px">
+      <div class="io-strip" id="disk-io-sk">
+        <div class="sk" style="height:68px;border-radius:10px"></div>
+        <div class="sk" style="height:68px;border-radius:10px"></div>
+        <div class="sk" style="height:68px;border-radius:10px"></div>
+        <div class="sk" style="height:68px;border-radius:10px"></div>
+      </div>
+      <div class="io-strip" id="disk-io-strip" style="display:none"></div>
+    </div>
+
+    <div class="grid2">
+      <div class="pnl">
+        <div class="pnl-head"><span class="pnl-title">Drives</span></div>
+        <div class="pnl-body" id="disk-drives-wrap">
+          <div id="disk-drives-sk">
+            <div class="sk sk-row"></div>
+            <div class="sk sk-row" style="margin-top:6px"></div>
+          </div>
+          <div id="disk-drives" style="display:none"></div>
+        </div>
+      </div>
+
+      <div class="pnl">
+        <div class="pnl-head"><span class="pnl-title">Activity History</span></div>
+        <div class="pnl-body" style="display:flex;flex-direction:column;gap:20px">
+          <div>
+            <div style="font-size:9px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;font-weight:700">Disk Activity %</div>
+            <canvas class="spark" id="disk-spk" style="height:60px;width:100%;display:block"></canvas>
+          </div>
+          <div>
+            <div style="font-size:9px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;font-weight:700">Network Activity (KB/s)</div>
+            <canvas class="spark" id="net-spk" style="height:60px;width:100%;display:block"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── GPU ──────────────────────────────────────────────────────── -->
+  <div id="pg-gpu" class="pg">
+    <div class="strip">
+      <div class="scard" id="g-sc-avail">
+        <div class="scard-top"><span class="scard-lbl">GPU Available</span></div>
+        <div class="sval" id="g-avail">—</div>
+        <div class="ssub" id="g-status">—</div>
+      </div>
+      <div class="scard" id="g-sc-3d">
+        <div class="scard-top"><span class="scard-lbl">3D Engine</span></div>
+        <div class="sval" id="g-3d">—</div>
+      </div>
+      <div class="scard" id="g-sc-vdec">
+        <div class="scard-top"><span class="scard-lbl">Video Decode</span></div>
+        <div class="sval" id="g-vdec">—</div>
+      </div>
+      <div class="scard" id="g-sc-venc">
+        <div class="scard-top"><span class="scard-lbl">Video Encode</span></div>
+        <div class="sval" id="g-venc">—</div>
+      </div>
+    </div>
+    <div class="pnl">
+      <div class="pnl-head"><span class="pnl-title">GPU Adapters</span></div>
+      <div class="pnl-body" id="gpu-adapters-wrap">
+        <div id="gpu-adapters-sk">
+          <div class="sk sk-row"></div>
+        </div>
+        <div id="gpu-adapters" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── GROUPS ───────────────────────────────────────────────────── -->
+  <div id="pg-groups" class="pg">
+    <div class="strip">
+      <div class="scard" id="grp-browser">
+        <div class="scard-top"><span class="scard-lbl">Browser / Electron</span></div>
+        <div class="sval" id="grp-browser-val">—</div>
+        <div class="ssub" id="grp-browser-count">0 processes</div>
+      </div>
+      <div class="scard" id="grp-dev">
+        <div class="scard-top"><span class="scard-lbl">Dev Tools</span></div>
+        <div class="sval" id="grp-dev-val">—</div>
+        <div class="ssub" id="grp-dev-count">0 processes</div>
+      </div>
+      <div class="scard" id="grp-sec">
+        <div class="scard-top"><span class="scard-lbl">Security Tools</span></div>
+        <div class="sval" id="grp-sec-val">—</div>
+        <div class="ssub" id="grp-sec-count">0 processes</div>
+      </div>
+    </div>
+    <div class="pnl">
+      <div class="pnl-head"><span class="pnl-title">Group Insights</span></div>
+      <div class="pnl-body" id="group-insights-wrap">
+        <div id="group-insights-sk">
+          <div class="sk sk-row"></div>
+          <div class="sk sk-row" style="margin-top:6px"></div>
+        </div>
+        <div id="group-insights" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SUSPICIOUS ───────────────────────────────────────────────── -->
+  <div id="pg-suspicious" class="pg">
+    <div class="pnl">
+      <div class="pnl-head">
+        <span class="pnl-title">Suspicious / Dev / Browser / Security</span>
+        <span class="pnl-badge" id="sus-count">0</span>
+        <button class="btn-sm" onclick="copyTableToClipboard('sus-tbl')">Copy</button>
+      </div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="sus-tbl-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="sus-tbl" style="display:none"></table>
+      </div>
+      <div class="footer-note">Groups: Node, Bun, browsers, JetBrains IDEs, AI helpers, Defender, Malwarebytes, GlassWire, Portmaster, VMware, NVIDIA</div>
+    </div>
+  </div>
+
+  <!-- ── SERVICES ─────────────────────────────────────────────────── -->
+  <div id="pg-services" class="pg">
+    <div class="pnl" style="margin-bottom:16px">
+      <div class="pnl-head"><span class="pnl-title">Heavy Services (top RAM PIDs)</span></div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="svc-tbl-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="svc-tbl" style="display:none"></table>
+      </div>
+    </div>
+    <div class="pnl">
+      <div class="pnl-head"><span class="pnl-title">Startup Items</span></div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="startup-tbl-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+        </div>
+        <table id="startup-tbl" style="display:none"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SYSTEM ───────────────────────────────────────────────────── -->
+  <div id="pg-system" class="pg">
+    <div class="pnl" style="margin-bottom:16px">
+      <div class="pnl-head"><span class="pnl-title">System Summary</span></div>
+      <div class="pnl-body" id="sys-summary-wrap">
+        <div id="sys-summary-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row" style="margin-top:6px"></div>
+          <div class="sk sk-row" style="margin-top:6px"></div>
+        </div>
+        <div id="sys-summary" style="display:none"></div>
+      </div>
+    </div>
+    <div class="pnl" style="margin-bottom:16px">
+      <div class="pnl-head"><span class="pnl-title">Page File</span></div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="pagefile-tbl-sk">
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="pagefile-tbl" style="display:none"></table>
+      </div>
+    </div>
+    <div class="pnl">
+      <div class="pnl-head"><span class="pnl-title">PowerShell Profiles</span></div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="profiles-tbl-sk">
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="profiles-tbl" style="display:none"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ALL PROCESSES ────────────────────────────────────────────── -->
+  <div id="pg-procs" class="pg">
+    <div class="sec-head" style="margin-bottom:14px">
+      <input class="sbar" id="s-all" placeholder="Filter by name…" style="width:260px">
+      <span class="pnl-badge" id="all-pc">—</span>
+      <button class="btn-sm" onclick="copyTableToClipboard('all-tbl')">Copy</button>
+    </div>
+    <div class="pnl">
+      <div class="tbl-scroll" style="max-height:600px">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="all-tbl-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="all-tbl" style="display:none"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SNAPSHOTS ─────────────────────────────────────────────────── -->
+  <div id="pg-snapshots" class="pg">
+    <div class="snap-controls" id="snap-controls">
+      <input class="sbar" id="snap-label" placeholder="Optional label (e.g., 'Before restart')" style="width:280px">
+      <button type="button" class="btn btn-primary" id="btn-save-snap">Save Snapshot</button>
+      <span class="snap-msg" id="snap-msg"></span>
+      <button type="button" class="btn" id="btn-gen-report" style="margin-left: 10px;">Generate Report</button>
+      <button type="button" class="btn" id="btn-dl-report" style="margin-left: 5px;">Download Report</button>
+    </div>
+    <div class="snap-grid">
+      <div class="pnl">
+        <div class="pnl-head"><span class="pnl-title">Saved Snapshots</span></div>
+        <div class="tbl-scroll" style="max-height:400px" id="snapshots-wrap">
+          <div id="snapshots-tbl-sk">
+            <div class="sk sk-row"></div><div class="sk sk-row" style="margin-top:6px"></div>
+          </div>
+          <table id="snapshots-tbl" style="display:none"></table>
+        </div>
+      </div>
+      <div class="pnl">
+        <div class="pnl-head"><span class="pnl-title">Comparison Result</span></div>
+        <div class="pnl-body" id="compare-result-wrap">
+          <div id="compare-result-sk">
+            <div class="sk sk-row"></div><div class="sk sk-row" style="margin-top:6px"></div>
+          </div>
+          <div id="compare-result" style="display:none">
+            <div class="note">Select a snapshot and click "Compare" to see changes.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DEBUG ────────────────────────────────────────────────────── -->
+  <div id="pg-debug" class="pg">
+    <div class="strip" style="margin-bottom:16px">
+      <div class="scard" id="dbg-sc-fetch">
+        <div class="scard-top"><span class="scard-lbl">Fetch /data</span></div>
+        <div class="sval" id="dbg-fetch">—</div>
+        <div class="ssub">Last fetch time (ms)</div>
+      </div>
+      <div class="scard" id="dbg-sc-render">
+        <div class="scard-top"><span class="scard-lbl">Render</span></div>
+        <div class="sval" id="dbg-render">—</div>
+        <div class="ssub">DOM render time (ms)</div>
+      </div>
+      <div class="scard" id="dbg-sc-cycle">
+        <div class="scard-top"><span class="scard-lbl">Cycle</span></div>
+        <div class="sval" id="dbg-cycle">—</div>
+        <div class="ssub">Total refresh cycle (ms)</div>
+      </div>
+      <div class="scard" id="dbg-sc-fps">
+        <div class="scard-top"><span class="scard-lbl">FPS</span></div>
+        <div class="sval" id="dbg-fps">—</div>
+        <div class="ssub">Frames per second</div>
+      </div>
+    </div>
+
+    <div class="grid2" style="margin-bottom:16px">
+      <div class="pnl">
+        <div class="pnl-head">Browser Memory</div>
+        <div class="pnl-body" id="dbg-mem-wrap">
+          <div id="dbg-mem-sk"><div class="sk sk-row"></div><div class="sk sk-row" style="margin-top:6px"></div></div>
+          <div id="dbg-mem" style="display:none"></div>
+        </div>
+      </div>
+      <div class="pnl">
+        <div class="pnl-head">Performance Timeline</div>
+        <div class="pnl-body" id="dbg-timeline-wrap">
+          <div id="dbg-timeline-sk"><div class="sk sk-row"></div></div>
+          <div id="dbg-timeline" style="font-family:monospace;font-size:11px;display:none"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid2" style="margin-bottom:16px">
+      <div class="pnl">
+        <div class="pnl-head">System Metrics (from pcmon)</div>
+        <div class="pnl-body" id="dbg-sys-metrics-wrap">
+          <div id="dbg-sys-metrics-sk"><div class="sk sk-row"></div></div>
+          <div id="dbg-sys-metrics" style="display:none"></div>
+        </div>
+      </div>
+      <div class="pnl">
+        <div class="pnl-head">Cache Status</div>
+        <div class="pnl-body" id="dbg-cache-wrap">
+          <div id="dbg-cache-sk"><div class="sk sk-row"></div></div>
+          <div id="dbg-cache" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid2" style="margin-bottom:16px">
+      <div class="pnl">
+        <div class="pnl-head">JavaScript Errors <span id="js-err-count" style="color:var(--text-dim)">0</span></div>
+        <div class="tbl-scroll" style="max-height:300px">
+          <div id="js-errors" style="padding:12px;font-family:monospace;font-size:12px">
+            <div class="note">No errors detected</div>
+          </div>
+        </div>
+      </div>
+      <div class="pnl">
+        <div class="pnl-head">PowerShell Errors</div>
+        <div id="ps-errors"></div>
+        <div class="pnl-body" id="dbg-ps-errs">
+          <div class="note">No PowerShell errors</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pnl">
+      <div class="pnl-head">Quick Links</div>
+      <div style="padding:12px;font-family:monospace;font-size:11px">
+        <div style="margin:4px 0"><a href="/errors" target="_blank" rel="noopener" style="color:var(--accent)">/errors</a> — PowerShell errors & system info</div>
+        <div style="margin:4px 0"><a href="/logs" target="_blank" rel="noopener" style="color:var(--accent)">/logs</a> — Raw error log</div>
+        <div style="margin:4px 0"><a href="/debug" target="_blank" rel="noopener" style="color:var(--accent)">/debug</a> — Backend cache state</div>
+        <div style="margin:4px 0"><a href="/health" target="_blank" rel="noopener" style="color:var(--accent)">/health</a> — Server status</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SETTINGS ─────────────────────────────────────────────────────── -->
+  <div id="pg-settings" class="pg">
+    <div class="pnl">
+      <div class="pnl-head"><span class="pnl-title">⚙ Connection</span></div>
+      <div class="pnl-body">
+        <div id="settings-conn-info" class="sys-info">
+          <div class="sys-row"><span>Status</span><span id="set-conn-status">Connecting...</span></div>
+          <div class="sys-row"><span>Method</span><span id="set-conn-method">—</span></div>
+          <div class="sys-row"><span>Refresh Rate</span><span id="set-refresh-val">—</span></div>
+          <div class="sys-row"><span>Latency</span><span id="set-latency">—</span></div>
+        </div>
+        <div style="margin-top:12px">
+          <label class="sbar" style="display:inline-block;margin-right:8px">Refresh Rate</label>
+          <select class="rf-sel" id="rf-sel-settings">
+            <option value="500" selected>500 ms</option>
+            <option value="1000">1 s</option>
+            <option value="2000">2 s</option>
+            <option value="5000">5 s</option>
+            <option value="10000">10 s</option>
+          </select>
+        </div>
+        <div class="note" style="margin-top:8px">
+          <span>⚡ WebSocket</span> = Real-time streaming<br>
+          <span>🔌 SSE</span> = Server-Sent Events<br>
+          <span>🔄 HTTP</span> = Fallback polling<br>
+          <span style="font-size:0.9em;color:var(--dim)">Fast counters: ~500ms | Tables: 2-4s | Static: 30s+</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="pnl" style="margin-top:16px">
+      <div class="pnl-head"><span class="pnl-title">Alert Thresholds</span></div>
+      <div class="pnl-body" id="thresholds-form-wrap">
+        <div id="thresholds-form-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row" style="margin-top:6px"></div>
+          <div class="sk sk-row" style="margin-top:6px"></div>
+        </div>
+        <div id="thresholds-form" style="display:none"></div>
+      </div>
+      <button type="button" id="btn-save-thresholds" class="btn-primary" style="margin-top:10px">Save Thresholds</button>
+      <span id="thresholds-msg" style="margin-left:10px"></span>
+    </div>
+  </div>
+
+</div><!-- /main -->
+
+<script src="src/1-config.js"></script>
+<script src="src/2-utils.js"></script>
+<script src="src/3-stream.js"></script>
+<script src="src/4-api.js"></script>
+<script src="src/5-render.js"></script>
+</body>
+</html>

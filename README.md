@@ -113,35 +113,42 @@ Customizable thresholds for:
 
 ```
 pcmon/
-  pcmon.ps1           # main entry point (~1480 lines)
-  build.ps1           # build: bundles web/src/* into web/dist/index.html
-  config.json         # saved alert thresholds (created on first use, gitignored)
-  snapshots/          # saved snapshots (created on first use)
-  web/
-    index.html       # HTML source template
-    dashboard.css    # styles (~880 lines)
-    src/             # frontend source modules (source of truth)
-      1-config.js   # shared state & config
-      2-utils.js    # helpers, formatting, sparklines
-      3-stream.js   # WebSocket/SSE/HTTP streaming
-      4-api.js      # API calls & process actions
-      5-render.js   # DOM rendering & UI logic
-    dist/            # build output (gitignored)
-      index.html    # bundled: HTML + CSS + JS inlined
-  bin/
-    pcmon.ps1        # CLI wrapper for package managers
-  wallpaper/
-    index.html       # live wallpaper mode
+├── pcmon.ps1           # built executable — run this
+├── web/dist/
+│   └── index.html      # built dashboard (CSS+JS inlined)
+├── src/
+│   ├── build.ps1       # build script — run this to rebuild
+│   ├── backend/        # PowerShell source modules
+│   │   ├── 00-config.ps1
+│   │   ├── 01-logging.ps1
+│   │   ├── 02-http-helpers.ps1
+│   │   ├── 03-actions.ps1
+│   │   ├── 04-snapshots.ps1
+│   │   ├── 05-collectors.ps1
+│   │   ├── 06-background.ps1
+│   │   ├── 07-server.ps1
+│   │   └── main.ps1
+│   └── web/           # frontend source
+│       ├── index.html     # HTML template
+│       ├── dashboard.css  # styles
+│       └── src/           # JS source modules
+│           ├── 1-config.js
+│           ├── 2-utils.js
+│           ├── 3-stream.js
+│           ├── 4-api.js
+│           └── 5-render.js
+├── wallpaper/          # live wallpaper HTML
+├── snapshots/          # saved snapshots (created on first use)
+└── config.json         # saved alert thresholds (created on first use)
 ```
 
 ## Architecture
 
-### Frontend Source & Build
-- Source files live in `web/src/` (5 modular JS files)
-- Run `.\build.ps1` to bundle source into `web/dist/index.html`
-- Build output is a single self-contained HTML file with CSS and JS inlined
+### Source & Build
+- Source code lives in `src/`
+- Run `.\src\build.ps1` to build `pcmon.ps1` and `web/dist/index.html`
 - `web/dist/` is gitignored — build before shipping or distribution
-- `pcmon.ps1` serves `web/dist/index.html` if built, falls back to `web/index.html` + `web/src/*` for development
+- `pcmon.ps1` serves `web/dist/index.html` if built, falls back to `src/web/index.html` + `src/web/src/*` for development
 
 ### Background Data Collection
 - Separate PowerShell process collects data continuously
