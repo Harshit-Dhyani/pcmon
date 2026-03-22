@@ -1,5 +1,8 @@
 # pcmon
 
+> **⚠️ Warning: This project is still in active development.**  
+> There may be bugs, incomplete features, and breaking changes. Use at your own risk.
+
 Local-first Windows system monitoring and diagnostics tool.
 
 ## Quick Start
