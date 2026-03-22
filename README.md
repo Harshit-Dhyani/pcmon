@@ -20,7 +20,7 @@ pwsh -File .\pcmon.ps1
 ## Usage
 
 ```powershell
-.\pcmon.ps1              # defaults: opens browser, 4s refresh
+.\pcmon.ps1              # defaults: opens browser, 500ms fast refresh
 .\pcmon.ps1 -NoOpen      # API-only mode, no browser auto-open
 .\pcmon.ps1 -ApiOnly     # same as -NoOpen
 .\pcmon.ps1 -Debug       # enable verbose debug logging
@@ -48,7 +48,7 @@ pwsh -File .\pcmon.ps1
 - **WebSocket** — fastest, persistent two-way connection
 - **SSE** — Server-Sent Events, real-time push
 - **HTTP Polling** — fallback with configurable refresh rate
-- **Fast Metrics** — sub-second updates (50ms) for key metrics via WebSocket/SSE
+- **Fast Metrics** — ~500ms updates for key metrics via WebSocket/SSE
 
 ### Process Actions
 - **Kill** — terminate a process (with confirmation)
@@ -89,7 +89,6 @@ Customizable thresholds for:
 |-------|--------|-------------|
 | `/` | GET | Dashboard HTML |
 | `/data` | GET | Live system data JSON |
-| `/dashboard.js` | GET | JavaScript |
 | `/dashboard.css` | GET | Styles |
 | `/stream` | GET | WebSocket or SSE real-time stream |
 | `/api/process/{pid}/kill` | POST | Kill process |
@@ -114,18 +113,35 @@ Customizable thresholds for:
 
 ```
 pcmon/
-  pcmon.ps1          # main entry point (~1450 lines)
-  config.json        # saved alert thresholds (created on first use)
-  snapshots/         # saved snapshots (created on first use)
+  pcmon.ps1           # main entry point (~1480 lines)
+  build.ps1           # build: bundles web/src/* into web/dist/index.html
+  config.json         # saved alert thresholds (created on first use, gitignored)
+  snapshots/          # saved snapshots (created on first use)
   web/
-    index.html      # dashboard HTML (~650 lines)
-    dashboard.js    # UI logic (~1440 lines)
-    dashboard.css   # styles (~880 lines)
+    index.html       # HTML source template
+    dashboard.css    # styles (~880 lines)
+    src/             # frontend source modules (source of truth)
+      1-config.js   # shared state & config
+      2-utils.js    # helpers, formatting, sparklines
+      3-stream.js   # WebSocket/SSE/HTTP streaming
+      4-api.js      # API calls & process actions
+      5-render.js   # DOM rendering & UI logic
+    dist/            # build output (gitignored)
+      index.html    # bundled: HTML + CSS + JS inlined
+  bin/
+    pcmon.ps1        # CLI wrapper for package managers
   wallpaper/
-    index.html      # live wallpaper
+    index.html       # live wallpaper mode
 ```
 
 ## Architecture
+
+### Frontend Source & Build
+- Source files live in `web/src/` (5 modular JS files)
+- Run `.\build.ps1` to bundle source into `web/dist/index.html`
+- Build output is a single self-contained HTML file with CSS and JS inlined
+- `web/dist/` is gitignored — build before shipping or distribution
+- `pcmon.ps1` serves `web/dist/index.html` if built, falls back to `web/index.html` + `web/src/*` for development
 
 ### Background Data Collection
 - Separate PowerShell process collects data continuously
@@ -134,15 +150,15 @@ pcmon/
 - Falls back to synchronous collection if background fails
 
 ### Real-Time Stream (`/stream`)
-- **WebSocket** — Try first via `AcceptWebSocketAsync`. Broadcasts full data every ~50ms when clients connected
-- **SSE** — Falls back to Server-Sent Events. Sends full data every ~50ms
-- **Fast Metrics** — Separate 50ms timer sends lightweight metrics (RAM, CPU, commit, disk) for sub-second updates
+- **WebSocket** — Try first via `AcceptWebSocketAsync`. Broadcasts full data every ~500ms when clients connected
+- **SSE** — Falls back to Server-Sent Events. Sends full data every ~500ms
+- **Fast Metrics** — Separate timer sends lightweight metrics (RAM, CPU, commit, disk) for near real-time updates
 - **HTTP Polling** — Last resort fallback to `/data` endpoint with configurable interval
 
 ### Refresh Rate
-- Configurable from Settings tab (1s - 30s)
-- Default: 4 seconds
-- Minimum: 1 second (500ms minimum enforced server-side)
+- Configurable from Settings tab (500ms - 30s)
+- Default: 500 ms
+- Minimum: 500 ms enforced server-side
 
 ## Requirements
 

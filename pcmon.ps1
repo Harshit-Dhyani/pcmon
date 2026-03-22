@@ -589,7 +589,6 @@ $base = "http://${HOSTNAME}:$Port"
 Write-Host "  $([char]0x1B)[2mOpen in browser (Ctrl+Click):$([char]0x1B)[0m"
 Write-Host "  $base/"
 if (-not $ApiOnly) {
-    Write-Host "  $base/dashboard.js"
     Write-Host "  $base/dashboard.css"
 }
 Write-Host "  $base/data"
@@ -617,9 +616,9 @@ $DIST_INDEX = Join-Path $WEB_DIR "dist\index.html"
 if (Test-Path $DIST_INDEX) {
     $script:StaticFiles['index.html'] = @{ data = [System.IO.File]::ReadAllBytes($DIST_INDEX); type = 'text/html; charset=utf-8' }
 } else {
-    foreach ($f in @('index.html', 'dashboard.css', 'dashboard.js')) {
+    foreach ($f in @('index.html', 'dashboard.css')) {
         $fp = Join-Path $WEB_DIR $f
-        if (Test-Path $fp) { $script:StaticFiles[$f] = @{ data = [System.IO.File]::ReadAllBytes($fp); type = if ($f -like '*.css') { 'text/css' } elseif ($f -like '*.js') { 'application/javascript' } else { 'text/html; charset=utf-8' } } }
+        if (Test-Path $fp) { $script:StaticFiles[$f] = @{ data = [System.IO.File]::ReadAllBytes($fp); type = if ($f -like '*.css') { 'text/css' } else { 'text/html; charset=utf-8' } } }
     }
 }
 $wallpaperFile = Join-Path $SCRIPT_DIR "wallpaper\index.html"
@@ -890,7 +889,8 @@ while ($true) {
             ts = (Get-Date -Format 'HH:mm:ss'); hostname = $env:COMPUTERNAME; os_caption = $os.Caption; total_procs = $procs.Count; ram_pct = $ramPct
             ram_used_gb = [math]::Round($usedRAMMB / 1024, 2); ram_total_gb = [math]::Round($totalRAMMB / 1024, 2); ram_avail_mb = $memAvailMB
             commit_pct = $commitPct; commit_gb = [math]::Round($commitBytes / 1GB, 2); limit_gb = [math]::Round($commitLimitBytes / 1GB, 2)
-            paged_pool_mb = [math]::Round([double]$s['\MEMORY\POOL PAGED BYTES'] / 1MB, 2); non_paged_mb = $nonPagedMB
+        paged_pool_mb = [math]::Round([double]$s['\MEMORY\POOL PAGED BYTES'] / 1MB, 2); paged_pool_pct = if ($totalRAMMB -gt 0) { [math]::Round([double]$s['\MEMORY\POOL PAGED BYTES'] / 1MB / $totalRAMMB * 100, 1) } else { 0 }
+        non_paged_mb = $nonPagedMB; non_paged_pct = if ($totalRAMMB -gt 0) { [math]::Round($nonPagedMB / $totalRAMMB * 100, 1) } else { 0 }
             pages_sec = [math]::Round([double]$s['\MEMORY\PAGES/SEC'], 2); page_reads_sec = [math]::Round([double]$s['\MEMORY\PAGE READS/SEC'], 2)
             cpu_pct = $cpuPct; cpu_queue = [math]::Round([double]$s['\SYSTEM\PROCESSOR QUEUE LENGTH'], 2)
             disk_pct = [math]::Round([double]$s['\PHYSICALDISK(_TOTAL)\% DISK TIME'], 1); disk_queue = [math]::Round([double]$s['\PHYSICALDISK(_TOTAL)\AVG. DISK QUEUE LENGTH'], 2)
@@ -1442,10 +1442,6 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
         }
         elseif ($path -match '^/dashboard\.css$') {
             $sf = $script:StaticFiles['dashboard.css']
-            if ($sf) { Send-Response $response $sf.data $sf.type } else { $response.StatusCode = 404; $response.ContentLength64 = 0 }
-        }
-        elseif ($path -match '^/dashboard\.js$') {
-            $sf = $script:StaticFiles['dashboard.js']
             if ($sf) { Send-Response $response $sf.data $sf.type } else { $response.StatusCode = 404; $response.ContentLength64 = 0 }
         }
         elseif ($path -eq "/wallpaper.html") {

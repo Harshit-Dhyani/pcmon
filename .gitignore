@@ -30,3 +30,4 @@ build/
 # User data (local only)
 .codex/
 snapshots/
+config.json

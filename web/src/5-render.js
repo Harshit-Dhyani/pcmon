@@ -142,6 +142,7 @@ function renderAll(d) {
   updateHistory('cpu', d.cpu_pct);
   updateHistory('disk', d.disk_pct);
   updateHistory('commit', d.commit_pct);
+  updateHistory('net', (d.net_sent_kb || 0) + (d.net_recv_kb || 0));
   refreshSparklines(d.cpu_pct || 0, d.ram_pct || 0, d.disk_pct || 0);
 
   /* RAM page */
@@ -149,6 +150,13 @@ function renderAll(d) {
   TXT(EL('r-avail'), fmtMem(d.ram_avail_mb) + ' / ' + fmtMem(d.ram_total_gb * 1024));
   COL(EL('r-sf-ram'), d.ram_pct || 0);
   FILL(EL('r-sf-fill-ram'), d.ram_pct || 0);
+  TXT(EL('r-sv-cm'), fmtNum(d.commit_pct) + '%');
+  TXT(EL('r-ss-cm'), fmtMem(d.commit_gb * 1024) + ' / ' + fmtMem(d.limit_gb * 1024));
+  COL(EL('r-sf-cm'), d.commit_pct || 0);
+  FILL(EL('r-sf-fill-cm'), d.commit_pct || 0);
+  TXT(EL('r-sv-pg'), fmtNum(d.pages_sec || 0) + '/s');
+  if (EL('r-paged')) EL('r-paged').textContent = fmtMem(d.paged_pool_mb || 0);
+  if (EL('r-nonpaged')) EL('r-nonpaged').textContent = fmtMem(d.non_paged_mb || 0);
   TXT(EL('r-sv-priv'), fmtMem(d.private_mb || 0));
   TXT(EL('r-sv-pgpool'), fmtMem(d.paged_pool_mb || 0) + ' (' + fmtNum(d.paged_pool_pct || 0) + '%)');
   TXT(EL('r-sv-npgpool'), fmtMem(d.non_paged_mb || 0) + ' (' + fmtNum(d.non_paged_pct || 0) + '%)');
@@ -159,9 +167,8 @@ function renderAll(d) {
   TXT(EL('c-sv-cpu'), fmtNum(d.cpu_pct) + '%');
   COL(EL('c-sf-cpu'), d.cpu_pct || 0);
   FILL(EL('c-sf-fill-cpu'), d.cpu_pct || 0);
-  TXT(EL('c-sv-queue'), (d.cpu_queue || 0).toFixed(1));
-  TXT(EL('c-sv-pages'), (d.pages_sec || 0).toFixed(1) + '/s');
-  TXT(EL('c-sv-hard'), (d.pages_hard || 0).toFixed(1) + '/s');
+  TXT(EL('c-sv-pg'), fmtNum(d.pages_sec || 0) + '/s');
+  TXT(EL('c-queue'), fmtNum(d.disk_queue || 0));
   hideSkeleton('c-tbl-sk', 'c-tbl');
 
   /* Disks */
@@ -207,11 +214,23 @@ function renderAll(d) {
 
   /* Groups */
   const groups = d.groups || {};
+  if (EL('grp-browser')) {
+    TXT(EL('grp-browser-val'), fmtMem(groups.browser ? groups.browser.ws_mb : 0));
+    TXT(EL('grp-browser-count'), (groups.browser ? groups.browser.count : 0) + ' processes');
+  }
+  if (EL('grp-dev')) {
+    TXT(EL('grp-dev-val'), fmtMem(groups.dev_tools ? groups.dev_tools.ws_mb : 0));
+    TXT(EL('grp-dev-count'), (groups.dev_tools ? groups.dev_tools.count : 0) + ' processes');
+  }
+  if (EL('grp-sec')) {
+    TXT(EL('grp-sec-val'), fmtMem(groups.security ? groups.security.ws_mb : 0));
+    TXT(EL('grp-sec-count'), (groups.security ? groups.security.count : 0) + ' processes');
+  }
   const gi = EL('group-insights');
   if (gi) {
     const items = [];
     if (groups.browser) items.push('Browser: ' + fmtMem(groups.browser.ws_mb) + ' (' + groups.browser.count + ' tabs)');
-    if (groups.devtools) items.push('Dev Tools: ' + fmtMem(groups.devtools.ws_mb) + ' (' + groups.devtools.count + ' tools)');
+    if (groups.dev_tools) items.push('Dev Tools: ' + fmtMem(groups.dev_tools.ws_mb) + ' (' + groups.dev_tools.count + ' tools)');
     if (groups.security) items.push('Security: ' + fmtMem(groups.security.ws_mb) + ' (' + groups.security.count + ' services)');
     gi.innerHTML = items.length ? items.map(t => '<div class="insight">' + esc(t) + '</div>').join('') : '<div class="note" style="padding:6px 0">No group activity detected.</div>';
     hideSkeleton('group-insights-sk', 'group-insights');
@@ -278,12 +297,6 @@ function renderAll(d) {
       insEl.innerHTML = (d.insights || []).map(t => '<div class="insight">' + esc(t) + '</div>').join('');
       if (!d.insights || d.insights.length === 0) insEl.innerHTML = '<div class="note" style="padding:6px 0">No insights yet.</div>';
     }
-  }
-
-  /* Insights (always) */
-  const gi2 = EL('group-insights');
-  if (gi2 && d.insights) {
-    gi2.innerHTML = (d.insights || []).map(t => '<div class="insight">' + esc(t) + '</div>').join('');
   }
 
   /* Error banner */
@@ -364,8 +377,8 @@ function updateDebugPanel(data) {
         '<div class="sys-row"><span>CPU</span><span>' + fmtNum(data.cpu_pct) + '%</span></div>' +
         '<div class="sys-row"><span>Commit</span><span>' + fmtNum(data.commit_pct) + '% (' + data.commit_gb + ' GB)</span></div>' +
         '<div class="sys-row"><span>GPU 3D</span><span>' + (data.gpu && data.gpu.available ? fmtNum(data.gpu.eng_type_totals['3d']) + '%' : 'N/A') + '</span></div>' +
-        '<div class="sys-row"><span>Pages/sec</span><span>' + data.pages_sec + '</span></div>' +
-        '<div class="sys-row"><span>Non-Paged Pool</span><span>' + data.non_paged_mb + ' MB</span></div>' +
+        '<div class="sys-row"><span>Pages/sec</span><span>' + fmtNum(data.pages_sec || 0) + '</span></div>' +
+        '<div class="sys-row"><span>Non-Paged Pool</span><span>' + fmtMem(data.non_paged_mb || 0) + '</span></div>' +
         '<div class="sys-row"><span>Perf (BE)</span><span>' + (data._perf_ms ? data._perf_ms + ' ms' : '—') + '</span></div>';
     hideSkeleton('dbg-sys-metrics-sk', 'dbg-sys-metrics');
   }
