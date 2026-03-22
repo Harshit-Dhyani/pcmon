@@ -1,9 +1,4 @@
 #!/bin/sh
 . "$(dirname "$0")/_/husky.sh"
 
-echo "Running post-commit tasks..."
-
-# Sync skills after commit
-bun run sync:skills 2>/dev/null || true
-
-echo "Post-commit tasks completed!"
+echo "Post-commit completed!"
