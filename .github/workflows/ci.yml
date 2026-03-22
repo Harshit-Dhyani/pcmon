@@ -44,24 +44,3 @@ jobs:
             exit 1
           fi
           echo "No obvious secrets detected"
-
-  sync-skills:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Sync skills
-        run: bun run sync:skills
-
-      - name: Check for changes
-        run: |
-          git status --porcelain
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "Skills need syncing!"
-            git diff --stat
-            exit 1
-          fi
-          echo "Skills are in sync"

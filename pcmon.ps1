@@ -986,8 +986,8 @@ try {
             $debug = @{
                 start_time = $script:StartTime.ToString('o')
                 cache_expiry = $script:StaticCacheExpiry.ToString('o')
-                cached_services_count = if ($script:CachedStatic.Services) { $script:CachedStatic.Services.Count } else { 0 }
-                cached_drives_count = if ($script:CachedStatic.Drives) { $script:CachedStatic.Drives.Count } else { 0 }
+                cached_services_count = @($script:CachedStatic.Services).Count
+                cached_drives_count = @($script:CachedStatic.Drives).Count
                 commandlines_cached = $script:CommandLines.Count
                 static_files = $script:StaticFiles.Keys
                 ws_clients = $script:WSClients.Count

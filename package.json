@@ -7,8 +7,7 @@
     "pcmon": "./bin/pcmon.ps1"
   },
   "scripts": {
-    "prepare": "husky install",
-    "sync:skills": "bun run scripts/sync-skills.ts"
+    "prepare": "husky install"
   },
   "devDependencies": {
     "@semantic-release/commit-analyzer": "^13.0.0",
