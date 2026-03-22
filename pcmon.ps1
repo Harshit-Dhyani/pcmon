@@ -629,6 +629,8 @@ $listener.TimeoutManager.RequestQueue = New-Object System.TimeSpan(0, 2, 0)
 $DIST_INDEX = Join-Path $WEB_DIR "dist\index.html"
 if (Test-Path $DIST_INDEX) {
     $script:StaticFiles['index.html'] = @{ data = [System.IO.File]::ReadAllBytes($DIST_INDEX); type = 'text/html; charset=utf-8' }
+    $cssSrc = Join-Path $WEB_DIR "dashboard.css"
+    if (Test-Path $cssSrc) { $script:StaticFiles['dashboard.css'] = @{ data = [System.IO.File]::ReadAllBytes($cssSrc); type = 'text/css' } }
 } else {
     foreach ($f in @('index.html', 'dashboard.css')) {
         $fp = Join-Path $WEB_DIR $f
@@ -1368,7 +1370,7 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($html)
             Send-Response $response $buffer "text/html; charset=utf-8" "attachment; filename=`"$filename`""
         }
-        elseif ($path -eq "/api/config" -and $request.HttpMethod -eq "GET") {
+        elseif (($path -eq "/api/thresholds" -or $path -eq "/api/config") -and $request.HttpMethod -eq "GET") {
             $json = $script:AlertThresholds | ConvertTo-Json -Compress
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
             $response.ContentType = "application/json"
