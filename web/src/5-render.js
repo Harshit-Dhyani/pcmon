@@ -107,7 +107,7 @@ function renderAll(d) {
   TXT(EL('sv-ram'), fmtNum(d.ram_pct) + '%');
   TXT(EL('ss-ram'), fmtMem(d.ram_avail_mb) + ' avail');
   COL(EL('sf-ram'), d.ram_pct || 0);
-  FILL(EL('sf-fill-ram'), d.ram_pct || 0);
+  FILL(EL('sf-ram'), d.ram_pct || 0);
   SBADGE(EL('sb-ram'), d.ram_pct || 0);
   const ramTrend = getTrend(d.ram_pct, PCM.prev.ram);
   if (EL('sdt-ram')) EL('sdt-ram').textContent = ramTrend;
@@ -115,7 +115,7 @@ function renderAll(d) {
 
   TXT(EL('sv-cpu'), fmtNum(d.cpu_pct) + '%');
   COL(EL('sf-cpu'), d.cpu_pct || 0);
-  FILL(EL('sf-fill-cpu'), d.cpu_pct || 0);
+  FILL(EL('sf-cpu'), d.cpu_pct || 0);
   SBADGE(EL('sb-cpu'), d.cpu_pct || 0);
   const cpuTrend = getTrend(d.cpu_pct, PCM.prev.cpu);
   if (EL('sdt-cpu')) EL('sdt-cpu').textContent = cpuTrend;
@@ -123,7 +123,7 @@ function renderAll(d) {
 
   TXT(EL('sv-disk'), fmtNum(d.disk_pct) + '%');
   COL(EL('sf-disk'), d.disk_pct || 0);
-  FILL(EL('sf-fill-disk'), d.disk_pct || 0);
+  FILL(EL('sf-disk'), d.disk_pct || 0);
   const diskTrend = getTrend(d.disk_pct, PCM.prev.disk);
   if (EL('sdt-disk')) EL('sdt-disk').textContent = diskTrend;
   PCM.prev.disk = d.disk_pct || 0;
@@ -274,7 +274,7 @@ function renderAll(d) {
     /* System page */
     renderDrives(EL('disk-drives'), d.disks);
 
-    const startupData = (d.startup_items || []).slice(0, 20);
+    const startupData = (d.startup || []).slice(0, 20);
     renderTable(EL('startup-tbl'), startupData.map(s => [s.name || '?', s.command || '?', s.location || '?']), ['Name', 'Command', 'Location'], {});
     hideSkeleton('startup-tbl-sk', 'startup-tbl');
 
@@ -282,7 +282,7 @@ function renderAll(d) {
     renderTable(EL('pagefile-tbl'), pfData.map(p => [p.name || '?', fmtMem(p.allocated_mb), fmtMem(p.current_usage_mb), fmtMem(p.peak_usage_mb)]), ['Name', 'Allocated MB', 'Current MB', 'Peak MB'], {});
     hideSkeleton('pagefile-tbl-sk', 'pagefile-tbl');
 
-    const profiles = (d.powershell_profiles || []);
+    const profiles = (d.ps_profiles || []);
     renderTable(EL('profiles-tbl'), profiles.map(p => [p.path || '?', p.size_kb ? fmtMem(p.size_kb) : '?']), ['Profile Path', 'Size'], {});
     hideSkeleton('profiles-tbl-sk', 'profiles-tbl');
 
@@ -522,20 +522,30 @@ function initSnapshots() {
 }
 
 async function renderSnapshots() {
-  const container = EL('snapshots-list');
-  if (!container) return;
+  const sk = EL('snapshots-tbl-sk');
+  const tbl = EL('snapshots-tbl');
+  if (sk) sk.style.display = 'none';
+  if (!tbl) return;
+  tbl.style.display = '';
   const snapshots = await fetchSnapshots();
-  if (!snapshots || snapshots.length === 0) { container.innerHTML = '<div class="note">No snapshots yet. Click Save Snapshot to create one.</div>'; return; }
-  container.innerHTML = snapshots.map(s =>
-    '<div class="snap-item">' +
-    '<span class="snap-ts">' + esc(s.ts) + '</span>' +
-    '<span class="snap-lbl">' + esc(s.label || '') + '</span>' +
-    '<button class="btn-sm" onclick="compareSnapshot(\'' + s.id + '\')">Compare</button>' +
-    '<button class="btn-sm" onclick="exportSnapshot(\'' + s.id + '\',\'json\')">JSON</button>' +
-    '<button class="btn-sm" onclick="exportSnapshot(\'' + s.id + '\',\'csv\')">CSV</button>' +
-    '<button class="btn-sm btn-danger" onclick="deleteSnapshot(\'' + s.id + '\')">X</button>' +
-    '</div>'
-  ).join('');
+  if (!snapshots || snapshots.length === 0) {
+    tbl.innerHTML = '<tbody><tr><td colspan="5"><div class="note">No snapshots yet. Click Save Snapshot to create one.</div></td></tr></tbody>';
+    return;
+  }
+  let html = '<tbody>';
+  snapshots.forEach(s => {
+    const escapedId = s.id ? s.id.replace(/'/g, "\\'") : '';
+    html += '<tr>' +
+      '<td>' + esc(s.ts) + '</td>' +
+      '<td>' + esc(s.label || '') + '</td>' +
+      '<td><button class="btn-sm" onclick="compareSnapshot(\'' + escapedId + '\')">Compare</button></td>' +
+      '<td><button class="btn-sm" onclick="exportSnapshot(\'' + escapedId + '\',\'json\')">JSON</button>' +
+          '<button class="btn-sm" onclick="exportSnapshot(\'' + escapedId + '\',\'csv\')">CSV</button></td>' +
+      '<td><button class="btn-sm btn-danger" onclick="deleteSnapshot(\'' + escapedId + '\')">X</button></td>' +
+      '</tr>';
+  });
+  html += '</tbody>';
+  tbl.innerHTML = html;
 }
 
 /* ── Thresholds ──────────────────────────────────────────────────── */
@@ -552,7 +562,7 @@ function renderThresholds() {
   const container = EL('thresholds-form');
   if (!container) return;
   container.innerHTML = THRESHOLD_DEFS.map(t =>
-    '<div class="th-row"><label>' + esc(t.label) + '</label><input type="number" data-key="' + t.key + '" value="' + (PCM.thresholds[t.key] || 0) + '" min="' + t.min + '" max="' + t.max + '"></div>'
+    '<div class="threshold-row"><label>' + esc(t.label) + '</label><input type="number" data-key="' + t.key + '" value="' + (PCM.thresholds[t.key] || 0) + '" min="' + t.min + '" max="' + t.max + '"></div>'
   ).join('');
 }
 

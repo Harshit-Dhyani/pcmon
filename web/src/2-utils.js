@@ -140,7 +140,7 @@ function updateHistory(type, value) {
   if (PCM.history[type].length > PCM.HISTORY_SIZE) PCM.history[type].shift();
 }
 
-function drawSparkline(canvasId, values, colorVar) {
+function drawSparkline(canvasId, values, colorVar, opts = {}) {
   const canvas = EL(canvasId);
   if (!canvas || !Array.isArray(values)) return;
   const validValues = values.filter(v => typeof v === 'number' && Number.isFinite(v));
@@ -161,32 +161,117 @@ function drawSparkline(canvasId, values, colorVar) {
   ctx.clearRect(0, 0, W, H);
 
   const max = Math.max(...validValues, 1);
+  const min = Math.min(...validValues);
+  const range = max - min || 1;
   const step = validValues.length > 1 ? W / (validValues.length - 1) : W;
   const style = getComputedStyle(document.documentElement);
   const color = style.getPropertyValue(colorVar).trim() || '#00f5b0';
 
+  // Grid lines
+  ctx.strokeStyle = hexOrVarToAlpha('#ffffff', 0.08);
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2, 4]);
+  for (let g = 0; g <= 4; g++) {
+    const y = Math.round((g / 4) * (H - 4)) + 2;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // Threshold line (if provided)
+  if (opts.threshold) {
+    const threshY = H - (opts.threshold / max) * (H - 4) - 2;
+    ctx.strokeStyle = opts.threshColor || '#ff6b6b';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(0, threshY);
+    ctx.lineTo(W, threshY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Points
+  const pts = validValues.map((v, i) => ({
+    x: i * step,
+    y: H - (v / max) * (H - 4) - 2
+  }));
+
+  // Smooth bezier curve
   ctx.beginPath();
-  validValues.forEach((v, i) => {
-    const x = i * step;
-    const y = H - (v / max) * (H - 4) - 2;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
+  if (pts.length > 2) {
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[Math.max(0, i - 1)];
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      const p3 = pts[Math.min(pts.length - 1, i + 2)];
+      const cp1x = p1.x + (p2.x - p0.x) / 6;
+      const cp1y = p1.y + (p2.y - p0.y) / 6;
+      const cp2x = p2.x - (p3.x - p1.x) / 6;
+      const cp2y = p2.y - (p3.y - p1.y) / 6;
+      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+    }
+  } else {
+    ctx.moveTo(pts[0].x, pts[0].y);
+    ctx.lineTo(pts[1].x, pts[1].y);
+  }
+
+  // Gradient fill
+  const lastX = (validValues.length - 1) * step;
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, hexOrVarToAlpha(color, 0.5));
+  grad.addColorStop(0.5, hexOrVarToAlpha(color, 0.15));
+  grad.addColorStop(1, hexOrVarToAlpha(color, 0.02));
+  ctx.lineTo(lastX, H);
+  ctx.lineTo(pts[0].x, H);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Glow line
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 12;
   ctx.strokeStyle = color;
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 2.5;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 6;
   ctx.stroke();
   ctx.shadowBlur = 0;
 
-  const lastX = (validValues.length - 1) * step;
-  ctx.lineTo(lastX, H);
-  ctx.lineTo(0, H);
-  ctx.closePath();
-  ctx.fillStyle = hexOrVarToAlpha(color, 0.12);
+  // Animated pulse dot (current value)
+  const lastPt = pts[pts.length - 1];
+  const now = Date.now();
+  const pulse = Math.sin(now / 300) * 0.3 + 0.7;
+  
+  // Outer glow
+  ctx.beginPath();
+  ctx.arc(lastPt.x, lastPt.y, 6, 0, Math.PI * 2);
+  ctx.fillStyle = hexOrVarToAlpha(color, pulse * 0.3);
   ctx.fill();
+  
+  // Inner dot
+  ctx.beginPath();
+  ctx.arc(lastPt.x, lastPt.y, 4, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 15;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Min/Max labels
+  if (opts.showMinMax !== false) {
+    ctx.font = '9px system-ui, sans-serif';
+    ctx.fillStyle = hexOrVarToAlpha('#ffffff', 0.5);
+    ctx.textAlign = 'right';
+    ctx.fillText(max.toFixed(0), W - 3, 10);
+    ctx.fillText(min.toFixed(0), W - 3, H - 2);
+  }
+
+  // Store for animation
+  canvas._lastDraw = now;
 }
 
 function refreshSparklines(cpuPct, ramPct, diskPct) {

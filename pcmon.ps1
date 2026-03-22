@@ -1,4 +1,7 @@
-#region --- CLI Parameters ---
+﻿# pcmon - Built from backend/src/
+# DO NOT EDIT - edit backend/src/
+
+# -- 00-config --
 param(
     [switch]$NoOpen,
     [switch]$ApiOnly,
@@ -38,9 +41,6 @@ if ($Wallpaper -and -not $Tray) {
     Write-Host "[pcmon] -Wallpaper requires -Tray to be enabled." -ForegroundColor Red
     exit 1
 }
-#endregion
-
-#region --- Setup ---
 $ErrorActionPreference = "Continue"
 $script:ErrorCount = 0
 $HOSTNAME = "localhost"
@@ -96,7 +96,86 @@ if (Test-Path $configPath) {
 }
 #endregion
 
-#region --- Snapshots & Compare ---
+# -- 01-logging --
+function Write-Log {
+    param([string]$Message, [string]$Level = "INFO")
+    $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $entry = "[$ts] [$Level] $Message"
+    if ($Level -ne "DEBUG" -or $script:DebugMode) { $script:Errors += $entry }
+    if ($script:Errors.Count -gt 100) { $script:Errors = @($script:Errors | Select-Object -Last 100) }
+    $entry | Out-File -FilePath $LOG_FILE -Append -Encoding UTF8
+}
+
+function Write-Err {
+    param([string]$Message)
+    Write-Log -Message $Message -Level "ERROR"
+}
+#endregion
+
+# -- 02-http-helpers --
+function Send-Response($response, $data, $type = "application/json", $contentDisposition = $null) {
+    try {
+        if ($null -ne $contentDisposition -and $contentDisposition -ne "") {
+            $response.Headers.Add("Content-Disposition", $contentDisposition)
+        }
+        if ($null -ne $data) {
+            if ($data -is [byte[]]) {
+                $response.ContentType = $type
+                $response.ContentLength64 = $data.Length
+                $response.OutputStream.Write($data, 0, $data.Length)
+            } else {
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($data)
+                $response.ContentType = $type
+                $response.ContentLength64 = $bytes.Length
+                $response.OutputStream.Write($bytes, 0, $bytes.Length)
+            }
+        }
+    } catch {}
+    try { $response.Close() } catch {}
+}
+
+# -- 03-actions --
+$global:LAST_ERROR = $null
+
+function Stop-ProcessById {
+    param([int]$ProcessId, [switch]$Force)
+    $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if (-not $proc) { return @{ success = $false; error = "Process not found" } }
+    if ($PROTECTED_PROCESSES -contains $proc.ProcessName) { return @{ success = $false; error = "Cannot terminate protected system process" } }
+    try {
+        Stop-Process -Id $ProcessId -Force:$Force -ErrorAction Stop
+        return @{ success = $true; message = "Process $($proc.ProcessName) terminated" }
+    } catch {
+        return @{ success = $false; error = "Operation failed" }
+    }
+}
+
+function Suspend-ProcessById {
+    param([int]$ProcessId)
+    $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if (-not $proc) { return @{ success = $false; error = "Process not found" } }
+    if ($PROTECTED_PROCESSES -contains $proc.ProcessName) { return @{ success = $false; error = "Cannot suspend protected system process" } }
+    try {
+        $proc.Suspend()
+        return @{ success = $true; message = "Process $($proc.ProcessName) suspended" }
+    } catch {
+        return @{ success = $false; error = "Operation failed" }
+    }
+}
+
+function Resume-ProcessById {
+    param([int]$ProcessId)
+    $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if (-not $proc) { return @{ success = $false; error = "Process not found" } }
+    try {
+        $proc.Resume()
+        return @{ success = $true; message = "Process $($proc.ProcessName) resumed" }
+    } catch {
+        return @{ success = $false; error = "Operation failed" }
+    }
+}
+
+# -- 04-snapshots --
 function Get-SnapshotFiles {
     param([string]$Pattern = "*.json")
     if (Test-Path $SNAPSHOTS_DIR) {
@@ -258,116 +337,7 @@ function Compare-Snapshots {
 }
 #endregion
 
-#region --- Utilities ---
-function Write-Log {
-    param([string]$Message, [string]$Level = "INFO")
-    $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    $entry = "[$ts] [$Level] $Message"
-    if ($Level -ne "DEBUG" -or $script:DebugMode) { $script:Errors += $entry }
-    if ($script:Errors.Count -gt 100) { $script:Errors = @($script:Errors | Select-Object -Last 100) }
-    $entry | Out-File -FilePath $LOG_FILE -Append -Encoding UTF8
-}
-
-function Send-Response {
-    param([System.Net.HttpListenerResponse]$Response, [byte[]]$Buffer, [string]$ContentType = "application/json", [string]$ContentDisposition = "")
-    try {
-        $Response.ContentType = $ContentType
-        if ($ContentDisposition) { $Response.Headers.Add("Content-Disposition", $ContentDisposition) }
-        $Response.ContentLength64 = $Buffer.Length
-        $Response.OutputStream.Write($Buffer, 0, $Buffer.Length)
-    } catch {
-        if ($script:DebugMode) { Write-Log "Send failed (client disconnect?): $($_.Exception.Message)" "DEBUG" }
-    }
-}
-
-function Write-Err {
-    param([string]$Message)
-    Write-Log -Message $Message -Level "ERROR"
-}
-
-$global:LAST_ERROR = $null
-
-function Stop-ProcessById {
-    param([int]$ProcessId, [switch]$Force)
-    $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
-    if (-not $proc) { return @{ success = $false; error = "Process not found" } }
-    if ($PROTECTED_PROCESSES -contains $proc.ProcessName) { return @{ success = $false; error = "Cannot terminate protected system process" } }
-    try {
-        Stop-Process -Id $ProcessId -Force:$Force -ErrorAction Stop
-        return @{ success = $true; message = "Process $($proc.ProcessName) terminated" }
-    } catch {
-        return @{ success = $false; error = "Operation failed" }
-    }
-}
-
-function Suspend-ProcessById {
-    param([int]$ProcessId)
-    $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
-    if (-not $proc) { return @{ success = $false; error = "Process not found" } }
-    if ($PROTECTED_PROCESSES -contains $proc.ProcessName) { return @{ success = $false; error = "Cannot suspend protected system process" } }
-    try {
-        $proc.Suspend()
-        return @{ success = $true; message = "Process $($proc.ProcessName) suspended" }
-    } catch {
-        return @{ success = $false; error = "Operation failed" }
-    }
-}
-
-function Resume-ProcessById {
-    param([int]$ProcessId)
-    $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
-    if (-not $proc) { return @{ success = $false; error = "Process not found" } }
-    try {
-        $proc.Resume()
-        return @{ success = $true; message = "Process $($proc.ProcessName) resumed" }
-    } catch {
-        return @{ success = $false; error = "Operation failed" }
-    }
-}
-
-function Broadcast-WebSocketData($data) {
-    if ($script:WSClients.Count -eq 0) { return }
-    $now = Get-Date
-    if (($now - $script:WSLastSend).TotalMilliseconds -lt $script:WSBroadcastInterval) { return }
-    $script:WSLastSend = $now
-    try {
-        $json = $data | ConvertTo-Json -Depth 20 -Compress
-        $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
-        $dead = [System.Collections.Generic.List[object]]::new()
-        foreach ($ws in $script:WSClients) {
-            try {
-                if ($ws.State -eq 'Open') {
-                    $ws.SendAsync([ArraySegment[byte]]$bytes, 'Text', $true, [Threading.CancellationToken]::None)
-                } else { $dead.Add($ws) }
-            } catch { $dead.Add($ws) }
-        }
-        foreach ($d in $dead) { try { $script:WSClients.Remove($d) } catch {} }
-    } catch {}
-}
-
-function Send-Response($response, $data, $type = "application/json", $contentDisposition = $null) {
-    try {
-        if ($null -ne $contentDisposition -and $contentDisposition -ne "") {
-            $response.Headers.Add("Content-Disposition", $contentDisposition)
-        }
-        if ($null -ne $data) {
-            if ($data -is [byte[]]) {
-                $response.ContentType = $type
-                $response.ContentLength64 = $data.Length
-                $response.OutputStream.Write($data, 0, $data.Length)
-            } else {
-                $bytes = [System.Text.Encoding]::UTF8.GetBytes($data)
-                $response.ContentType = $type
-                $response.ContentLength64 = $bytes.Length
-                $response.OutputStream.Write($bytes, 0, $bytes.Length)
-            }
-        }
-    } catch {}
-    try { $response.Close() } catch {}
-}
-#endregion
-
-#region --- Data Collection ---
+# -- 05-collectors --
 function Get-CachedStaticData {
     $now = Get-Date
     if ($script:StaticCacheExpiry -gt $now) { return }
@@ -585,227 +555,7 @@ function _CollectLiveData {
 }
 #endregion
 
-#region --- HTTP Server ---
-$modeLabel = if ($ApiOnly) { "API-Only" } else { "Dashboard" }
-$browserLabel = if ($OPEN_BROWSER) { "Auto-open" } else { "No browser" }
-$trayLabel = if ($Tray) { "$([char]0x1B)[92m[Tray]$([char]0x1B)[0m" } else { "" }
-$wallpaperLabel = if ($Wallpaper) { "$([char]0x1B)[93m[Wallpaper]$([char]0x1B)[0m" } else { "" }
-
-Write-Host ""
-Write-Host "  =========================================" -ForegroundColor DarkGray
-Write-Host "   $([char]0x1B)[92mPCMON v1.0$([char]0x1B)[0m  $([char]0x1B)[96m$modeLabel$([char]0x1B)[0m $trayLabel $wallpaperLabel" -NoNewline; Write-Host ""
-Write-Host "   $([char]0x1B)[2m  Local-first Windows system monitor$([char]0x1B)[0m"
-Write-Host "   $([char]0x1B)[36m  Fast: 500ms | Tables: 4s | Static: 30s+$([char]0x1B)[0m"
-Write-Host "  =========================================" -ForegroundColor DarkGray
-Write-Host ""
-Write-Host ""
-$base = "http://${HOSTNAME}:$Port"
-Write-Host "  $([char]0x1B)[2mOpen in browser (Ctrl+Click):$([char]0x1B)[0m"
-Write-Host "  $base/"
-if (-not $ApiOnly) {
-    Write-Host "  $base/dashboard.css"
-}
-Write-Host "  $base/data"
-Write-Host "  $base/api/snapshots"
-Write-Host "  $base/api/report"
-Write-Host "  $base/api/report/download"
-Write-Host "  $base/stream $([char]0x1B)[36m(WebSocket/SSE)$([char]0x1B)[0m"
-Write-Host "  $base/health"
-Write-Host "  $base/errors"
-Write-Host "  $base/debug"
-Write-Host "  $base/logs"
-Write-Host "  -----------------------------------------" -ForegroundColor DarkGray
-if ($Tray) {
-    Write-Host "  Stop      : $([char]0x1B)[93mRight-click tray -> Exit$([char]0x1B)[0m" -NoNewline; Write-Host ""
-} else {
-    Write-Host "  Stop      : $([char]0x1B)[93mCtrl+C$([char]0x1B)[0m" -NoNewline; Write-Host ""
-}
-Write-Host ""
-
-$listener = New-Object System.Net.HttpListener
-$listener.Prefixes.Add("http://${HOSTNAME}:$Port/")
-$listener.TimeoutManager.RequestQueue = New-Object System.TimeSpan(0, 2, 0)
-
-$DIST_INDEX = Join-Path $WEB_DIR "dist\index.html"
-if (Test-Path $DIST_INDEX) {
-    $script:StaticFiles['index.html'] = @{ data = [System.IO.File]::ReadAllBytes($DIST_INDEX); type = 'text/html; charset=utf-8' }
-    $cssSrc = Join-Path $WEB_DIR "dashboard.css"
-    if (Test-Path $cssSrc) { $script:StaticFiles['dashboard.css'] = @{ data = [System.IO.File]::ReadAllBytes($cssSrc); type = 'text/css' } }
-} else {
-    foreach ($f in @('index.html', 'dashboard.css')) {
-        $fp = Join-Path $WEB_DIR $f
-        if (Test-Path $fp) { $script:StaticFiles[$f] = @{ data = [System.IO.File]::ReadAllBytes($fp); type = if ($f -like '*.css') { 'text/css' } else { 'text/html; charset=utf-8' } } }
-    }
-}
-$wallpaperFile = Join-Path $SCRIPT_DIR "wallpaper\index.html"
-if (Test-Path $wallpaperFile) { $script:StaticFiles['wallpaper.html'] = @{ data = [System.IO.File]::ReadAllBytes($wallpaperFile); type = 'text/html; charset=utf-8' } }
-
-$listener.Start()
-
-$wsBroadcastTimer = New-Object System.Timers.Timer
-$wsBroadcastTimer.Interval = $script:WSBroadcastInterval
-$wsBroadcastTimer.AutoReset = $true
-Register-ObjectEvent -InputObject $wsBroadcastTimer -EventName Elapsed -Action {
-    if ($script:WSClients.Count -eq 0) { return }
-    try {
-        if (Test-Path $cacheFile) {
-            $fi = Get-Item $cacheFile -ErrorAction SilentlyContinue
-            if ($fi) {
-                $data = Get-Content $cacheFile -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json -ErrorAction SilentlyContinue
-                if ($data) {
-                    Broadcast-WebSocketData $data
-                }
-            }
-        }
-    } catch {}
-} | Out-Null
-$wsBroadcastTimer.Start()
-
-$script:LastFastUpdate = [DateTime]::MinValue
-$script:FastUpdateInterval = 500
-
-function Get-FastMetrics {
-    try {
-        $counters = Get-Counter '\Memory\Available MBytes','\Memory\Committed Bytes','\Memory\Commit Limit','\Processor(_Total)\% Processor Time','\PhysicalDisk(_Total)\% Disk Time' -ErrorAction SilentlyContinue
-        $s = @{}
-        if ($counters) { foreach ($sm in $counters.CounterSamples) { $idx = $sm.Path.IndexOf("\", 2); $clean = $sm.Path.Substring($idx).ToUpperInvariant(); $s[$clean] = $sm.CookedValue } }
-        $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
-        $totalMB = if ($os) { [math]::Round($os.TotalVisibleMemorySize / 1024, 0) } else { 0 }
-        $availMB = if ($s['\MEMORY\AVAILABLE MBYTES']) { [math]::Round($s['\MEMORY\AVAILABLE MBYTES'], 0) } else { 0 }
-        $usedMB = $totalMB - $availMB
-        $ramPct = if ($totalMB -gt 0) { [math]::Round(($usedMB / $totalMB) * 100, 1) } else { 0 }
-        $commitPct = 0
-        if ($s['\MEMORY\COMMITTED BYTES'] -and $s['\MEMORY\COMMIT LIMIT']) {
-            $commitPct = [math]::Round(($s['\MEMORY\COMMITTED BYTES'] / $s['\MEMORY\COMMIT LIMIT']) * 100, 1)
-        }
-        return @{
-            ts = (Get-Date -Format 'HH:mm:ss')
-            hostname = $env:COMPUTERNAME
-            ram_pct = $ramPct
-            ram_avail_mb = $availMB
-            ram_total_gb = [math]::Round($totalMB / 1024, 1)
-            commit_pct = $commitPct
-            cpu_pct = if ($s['\PROCESSOR(_TOTAL)\% PROCESSOR TIME']) { [math]::Round($s['\PROCESSOR(_TOTAL)\% PROCESSOR TIME'], 1) } else { 0 }
-            disk_pct = if ($s['\PHYSICALDISK(_TOTAL)\% DISK TIME']) { [math]::Round($s['\PHYSICALDISK(_TOTAL)\% DISK TIME'], 1) } else { 0 }
-            _fast = $true
-        }
-    } catch { return $null }
-}
-
-$fastTimer = New-Object System.Timers.Timer
-$fastTimer.Interval = $script:FastUpdateInterval
-$fastTimer.AutoReset = $true
-Register-ObjectEvent -InputObject $fastTimer -EventName Elapsed -Action {
-    if ($script:WSClients.Count -eq 0) { return }
-    $now = Get-Date
-    if (($now - $script:LastFastUpdate).TotalMilliseconds -lt $script:FastUpdateInterval) { return }
-    $script:LastFastUpdate = $now
-    try {
-        $data = Get-FastMetrics
-        if ($data) { Broadcast-WebSocketData $data }
-    } catch {}
-} | Out-Null
-$fastTimer.Start()
-
-$cleanupTimer = New-Object System.Timers.Timer
-$cleanupTimer.Interval = 30000
-$cleanupTimer.AutoReset = $true
-Register-ObjectEvent -InputObject $cleanupTimer -EventName Elapsed -Action {
-    $dead = [System.Collections.Generic.List[object]]::new()
-    foreach ($ws in $script:WSClients) {
-        try { if ($ws.State -ne 'Open') { $dead.Add($ws) } } catch { $dead.Add($ws) }
-    }
-    foreach ($d in $dead) { try { $script:WSClients.Remove($d) } catch {} }
-    $errCount = $script:Errors.Count
-    if ($errCount -gt 100) { $script:Errors = @($script:Errors | Select-Object -Last 100) }
-    if ($script:DebugMode -and $dead.Count -gt 0) { Write-Host "[DEBUG] Cleanup removed $($dead.Count) stale WS clients" -ForegroundColor DarkGray }
-} | Out-Null
-$cleanupTimer.Start()
-
-if ($OPEN_BROWSER -and -not $Tray) {
-    Start-Process "http://${HOSTNAME}:$Port"
-}
-
-if ($Tray) {
-    Add-Type -AssemblyName System.Windows.Forms
-    Add-Type -AssemblyName System.Drawing
-
-    $script:TrayIcon = $null
-    $script:WallpaperTimer = $null
-
-    function New-TrayIcon {
-        $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
-        $notifyIcon.Icon = [System.Drawing.SystemIcons]::Application
-        $notifyIcon.Text = "PCMON - System Monitor"
-        $notifyIcon.Visible = $true
-
-        $contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
-
-        $openItem = New-Object System.Windows.Forms.ToolStripMenuItem("Open Dashboard")
-        $openItem.Add_Click({ Start-Process "http://${HOSTNAME}:$Port" })
-        $contextMenu.Items.Add($openItem)
-
-        if ($Wallpaper) {
-            $wallpaperItem = New-Object System.Windows.Forms.ToolStripMenuItem("Open Wallpaper")
-            $wallpaperItem.Add_Click({ 
-                $wallpaperUrl = "http://${HOSTNAME}:$Port/wallpaper.html"
-                Start-Process $wallpaperUrl 
-            })
-            $contextMenu.Items.Add($wallpaperItem)
-        }
-
-        $exitItem = New-Object System.Windows.Forms.ToolStripMenuItem("Exit")
-        $exitItem.Add_Click({ 
-            $script:shuttingDown = $true
-            $listener.Stop()
-            if ($script:TrayIcon) { $script:TrayIcon.Visible = $false }
-            if ($script:WallpaperTimer) { $script:WallpaperTimer.Stop() }
-            exit 0
-        })
-        $contextMenu.Items.Add($exitItem)
-
-        $notifyIcon.ContextMenuStrip = $contextMenu
-
-        $notifyIcon.Add_DoubleClick({ Start-Process "http://${HOSTNAME}:$Port" })
-
-        return $notifyIcon
-    }
-
-    $script:TrayIcon = New-TrayIcon
-    Write-Host "  System tray icon enabled." -ForegroundColor Green
-}
-
-Get-CachedStaticData
-
-$refreshRateFile = Join-Path $env:TEMP "pcmon_refresh_rate.txt"
-$profilePathsFile = Join-Path $env:TEMP "pcmon_profile_paths.json"
-"500" | Out-File -FilePath $refreshRateFile -Encoding UTF8 -Force
-$profilePathsJson = @(
-    $PROFILE.AllUsersAllHosts,
-    $PROFILE.AllUsersCurrentHost,
-    $PROFILE.CurrentUserAllHosts,
-    $PROFILE.CurrentUserCurrentHost
-) | Where-Object { $_ } | ConvertTo-Json -Compress
-$profilePathsJson | Out-File -FilePath $profilePathsFile -Encoding UTF8 -Force
-
-Write-Host "  Initializing..." -NoNewline
-$sw2 = [Diagnostics.Stopwatch]::StartNew()
-$sw2.Start()
-if (Test-Path $cacheFile) {
-    try {
-        $script:LiveDataCache = Get-Content $cacheFile -Raw -ErrorAction Stop | ConvertFrom-Json
-        $script:LiveCacheTime = Get-Date
-        $initMs = $sw2.ElapsedMilliseconds
-        Write-Host " ${initMs}ms" -ForegroundColor Green -NoNewline
-        Write-Host " | Streaming ready" -ForegroundColor Cyan
-    } catch {
-        Write-Host " no cache, starting..." -ForegroundColor Yellow
-    }
-} else {
-    Write-Host " first run..." -ForegroundColor Yellow
-}
-Write-Host ""
-
+# -- 06-background --
 $bgScriptContent = @'
 $cacheFile = $args[0]
 $refreshRateFile = $args[1]
@@ -835,7 +585,7 @@ while ($true) {
     if ($bgDebug) { Write-Host "[BG DEBUG] Cycle $cycleCount at ${bgRefreshRate}ms" -ForegroundColor Cyan }
     $t0 = [DateTime]::UtcNow.Ticks
     try {
-        $counters = Get-Counter '\Memory\Available MBytes','\Memory\Committed Bytes','\Memory\Commit Limit','\Processor(_Total)\% Processor Time','\PhysicalDisk(_Total)\% Disk Time' -ErrorAction SilentlyContinue
+        $counters = Get-Counter '\Memory\Available MBytes','\Memory\Committed Bytes','\Memory\Commit Limit','\Memory\Pool Paged Bytes','\Memory\Pool Nonpaged Bytes','\Memory\Pages/sec','\Memory\Page Reads/sec','\Processor(_Total)\% Processor Time','\System\Processor Queue Length','\PhysicalDisk(_Total)\% Disk Time','\PhysicalDisk(_Total)\Avg. Disk Queue Length','\PhysicalDisk(_Total)\Disk Read Bytes/sec','\PhysicalDisk(_Total)\Disk Write Bytes/sec','\Network Interface(*)\Bytes Sent/sec','\Network Interface(*)\Bytes Received/sec' -ErrorAction SilentlyContinue
         $s = @{}
         if ($counters) { foreach ($sm in $counters.CounterSamples) { $idx = $sm.Path.IndexOf("\", 2); $clean = $sm.Path.Substring($idx).ToUpperInvariant(); $s[$clean] = $sm.CookedValue } }
         $memAvailMB = [math]::Round([double]$s['\MEMORY\AVAILABLE MBYTES'], 2)
@@ -846,12 +596,16 @@ while ($true) {
         $commitPct = if ($commitLimitBytes -gt 0) { [math]::Round(($commitBytes / $commitLimitBytes) * 100, 1) } else { 0 }
         $cpuPct = [math]::Round([double]$s['\PROCESSOR(_TOTAL)\% PROCESSOR TIME'], 1)
         $netSentKB = 0.0; $netRecvKB = 0.0
+        foreach ($k in $s.Keys) { if ($k -like '*BYTES SENT*') { $netSentKB += $s[$k] } elseif ($k -like '*BYTES RECEIVED*') { $netRecvKB += $s[$k] } }
         $diskPct = [math]::Round([double]$s['\PHYSICALDISK(_TOTAL)\% DISK TIME'], 1)
         $doHeavy = ($cycleCount - $lastHeavyCollect) -ge $heavyInterval
         $doStatic = ($cycleCount - $lastStaticCollect) -ge $staticInterval
         if ($doHeavy) { $lastHeavyCollect = $cycleCount }
         if ($doStatic) { $lastStaticCollect = $cycleCount }
         $cmdLines = @{}
+        $procs = @(); $all_processes = @(); $by_ram = @(); $by_private = @(); $by_cpu = @(); $suspicious = @()
+        $browserGroup = @{ ws_mb = 0.0; count = 0 }; $devGroup = @{ ws_mb = 0.0; count = 0 }; $secGroup = @{ ws_mb = 0.0; count = 0 }
+        $heavyServices = @()
         if ($doHeavy) {
             foreach ($c in @(Get-CimInstance Win32_Process -Property ProcessId, CommandLine, ExecutablePath -ErrorAction SilentlyContinue)) { $cmdLines[[int]$c.ProcessId] = @{ cmd = $c.CommandLine; path = $c.ExecutablePath } }
             $procs = Get-Process -ErrorAction SilentlyContinue | Select-Object -First 300
@@ -870,6 +624,12 @@ while ($true) {
         $gpuResult = @{ available = $false; adapters = @(); eng_type_totals = @{ '3d' = 0; 'videodecode' = 0; 'videoprocessing' = 0; 'copy' = 0; 'videoencode' = 0; 'security' = 0; 'vr' = 0; 'other' = 0 }; dedicated_used_gb = 0; dedicated_total_gb = 0 }
         foreach ($adapter in $video) { $totalGB = if ($adapter.AdapterRAM -and $adapter.AdapterRAM -gt 0) { [math]::Round($adapter.AdapterRAM / 1GB, 1) } else { 0 }; $gpuResult.adapters += @{ name = $adapter.Name; status = $adapter.Status; dedicated_gb = 0; total_gb = $totalGB; pct = 0 }; $gpuResult.dedicated_total_gb += $totalGB }
         $gpuResult.available = $gpuResult.adapters.Count -gt 0
+        if ($doHeavy) {
+            try {
+                $gpuCounters = Get-Counter '\GPU Engine(*)\Utilization Percentage' -ErrorAction SilentlyContinue
+                if ($gpuCounters) { foreach ($sm in $gpuCounters.CounterSamples) { $p = $sm.Path.ToUpperInvariant(); if ($p -like '*GPU*ENG*3D*') { $gpuResult.eng_type_totals['3d'] += $sm.CookedValue } elseif ($p -like '*GPU*ENG*VIDEODECODE*') { $gpuResult.eng_type_totals['videodecode'] += $sm.CookedValue } elseif ($p -like '*GPU*ENG*VIDEOENCODE*') { $gpuResult.eng_type_totals['videoencode'] += $sm.CookedValue } } }
+            } catch {}
+        }
         if ($doStatic) {
             $drives = @(Get-CimInstance Win32_LogicalDisk -Property DeviceID, VolumeName, FileSystem, Size, FreeSpace -ErrorAction SilentlyContinue | Where-Object { $_.DriveType -eq 3 })
             if ($drives.Count -eq 0) { try { $drives = @(Get-WmiObject Win32_LogicalDisk -ErrorAction SilentlyContinue | Where-Object { $_.DriveType -eq 3 }) } catch {} }
@@ -962,7 +722,245 @@ try {
     Write-Host "[pcmon] Warning: Background process failed to start: $_" -ForegroundColor Yellow
 }
 
-$script:LastBroadcast = [DateTime]::MinValue
+# -- 07-server --
+$modeLabel = if ($ApiOnly) { "API-Only" } else { "Dashboard" }
+$browserLabel = if ($OPEN_BROWSER) { "Auto-open" } else { "No browser" }
+$trayLabel = if ($Tray) { "$([char]0x1B)[92m[Tray]$([char]0x1B)[0m" } else { "" }
+$wallpaperLabel = if ($Wallpaper) { "$([char]0x1B)[93m[Wallpaper]$([char]0x1B)[0m" } else { "" }
+
+Write-Host ""
+Write-Host "  =========================================" -ForegroundColor DarkGray
+Write-Host "   $([char]0x1B)[92mPCMON v1.0$([char]0x1B)[0m  $([char]0x1B)[96m$modeLabel$([char]0x1B)[0m $trayLabel $wallpaperLabel" -NoNewline; Write-Host ""
+Write-Host "   $([char]0x1B)[2m  Local-first Windows system monitor$([char]0x1B)[0m"
+Write-Host "   $([char]0x1B)[36m  Fast: 500ms | Tables: 4s | Static: 30s+$([char]0x1B)[0m"
+Write-Host "  =========================================" -ForegroundColor DarkGray
+Write-Host ""
+Write-Host ""
+$base = "http://${HOSTNAME}:$Port"
+Write-Host "  $([char]0x1B)[2mOpen in browser (Ctrl+Click):$([char]0x1B)[0m"
+Write-Host "  $base/"
+if (-not $ApiOnly) {
+    Write-Host "  $base/dashboard.css"
+}
+Write-Host "  $base/data"
+Write-Host "  $base/api/snapshots"
+Write-Host "  $base/api/report"
+Write-Host "  $base/api/report/download"
+Write-Host "  $base/stream $([char]0x1B)[36m(WebSocket/SSE)$([char]0x1B)[0m"
+Write-Host "  $base/health"
+Write-Host "  $base/errors"
+Write-Host "  $base/debug"
+Write-Host "  $base/logs"
+Write-Host "  -----------------------------------------" -ForegroundColor DarkGray
+if ($Tray) {
+    Write-Host "  Stop      : $([char]0x1B)[93mRight-click tray -> Exit$([char]0x1B)[0m" -NoNewline; Write-Host ""
+} else {
+    Write-Host "  Stop      : $([char]0x1B)[93mCtrl+C$([char]0x1B)[0m" -NoNewline; Write-Host ""
+}
+Write-Host ""
+
+$listener = New-Object System.Net.HttpListener
+$listener.Prefixes.Add("http://${HOSTNAME}:$Port/")
+$listener.TimeoutManager.RequestQueue = New-Object System.TimeSpan(0, 2, 0)
+
+$DIST_INDEX = Join-Path $WEB_DIR "dist\index.html"
+if (Test-Path $DIST_INDEX) {
+    $script:StaticFiles['index.html'] = @{ data = [System.IO.File]::ReadAllBytes($DIST_INDEX); type = 'text/html; charset=utf-8' }
+    $cssSrc = Join-Path $WEB_DIR "dashboard.css"
+    if (Test-Path $cssSrc) { $script:StaticFiles['dashboard.css'] = @{ data = [System.IO.File]::ReadAllBytes($cssSrc); type = 'text/css' } }
+} else {
+    foreach ($f in @('index.html', 'dashboard.css')) {
+        $fp = Join-Path $WEB_DIR $f
+        if (Test-Path $fp) { $script:StaticFiles[$f] = @{ data = [System.IO.File]::ReadAllBytes($fp); type = if ($f -like '*.css') { 'text/css' } else { 'text/html; charset=utf-8' } } }
+    }
+}
+$wallpaperFile = Join-Path $SCRIPT_DIR "wallpaper\index.html"
+if (Test-Path $wallpaperFile) { $script:StaticFiles['wallpaper.html'] = @{ data = [System.IO.File]::ReadAllBytes($wallpaperFile); type = 'text/html; charset=utf-8' } }
+
+$listener.Start()
+
+$wsBroadcastTimer = New-Object System.Timers.Timer
+$wsBroadcastTimer.Interval = $script:WSBroadcastInterval
+$wsBroadcastTimer.AutoReset = $true
+Register-ObjectEvent -InputObject $wsBroadcastTimer -EventName Elapsed -Action {
+    if ($script:WSClients.Count -eq 0) { return }
+    try {
+        if (Test-Path $cacheFile) {
+            $fi = Get-Item $cacheFile -ErrorAction SilentlyContinue
+            if ($fi) {
+                $data = Get-Content $cacheFile -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json -ErrorAction SilentlyContinue
+                if ($data) {
+                    Broadcast-WebSocketData $data
+                }
+            }
+        }
+    } catch {}
+} | Out-Null
+$wsBroadcastTimer.Start()
+
+$script:LastFastUpdate = [DateTime]::MinValue
+$script:FastUpdateInterval = 500
+$script:LastFastRateCheck = [DateTime]::MinValue
+
+function Get-FastMetrics {
+    try {
+        $counters = Get-Counter '\Memory\Available MBytes','\Memory\Committed Bytes','\Memory\Commit Limit','\Processor(_Total)\% Processor Time','\PhysicalDisk(_Total)\% Disk Time' -ErrorAction SilentlyContinue
+        $s = @{}
+        if ($counters) { foreach ($sm in $counters.CounterSamples) { $idx = $sm.Path.IndexOf("\", 2); $clean = $sm.Path.Substring($idx).ToUpperInvariant(); $s[$clean] = $sm.CookedValue } }
+        $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+        $totalMB = if ($os) { [math]::Round($os.TotalVisibleMemorySize / 1024, 0) } else { 0 }
+        $availMB = if ($s['\MEMORY\AVAILABLE MBYTES']) { [math]::Round($s['\MEMORY\AVAILABLE MBYTES'], 0) } else { 0 }
+        $usedMB = $totalMB - $availMB
+        $ramPct = if ($totalMB -gt 0) { [math]::Round(($usedMB / $totalMB) * 100, 1) } else { 0 }
+        $commitPct = 0
+        if ($s['\MEMORY\COMMITTED BYTES'] -and $s['\MEMORY\COMMIT LIMIT']) {
+            $commitPct = [math]::Round(($s['\MEMORY\COMMITTED BYTES'] / $s['\MEMORY\COMMIT LIMIT']) * 100, 1)
+        }
+        return @{
+            ts = (Get-Date -Format 'HH:mm:ss')
+            hostname = $env:COMPUTERNAME
+            ram_pct = $ramPct
+            ram_avail_mb = $availMB
+            ram_total_gb = [math]::Round($totalMB / 1024, 1)
+            commit_pct = $commitPct
+            cpu_pct = if ($s['\PROCESSOR(_TOTAL)\% PROCESSOR TIME']) { [math]::Round($s['\PROCESSOR(_TOTAL)\% PROCESSOR TIME'], 1) } else { 0 }
+            disk_pct = if ($s['\PHYSICALDISK(_TOTAL)\% DISK TIME']) { [math]::Round($s['\PHYSICALDISK(_TOTAL)\% DISK TIME'], 1) } else { 0 }
+            _fast = $true
+        }
+    } catch { return $null }
+}
+
+$fastTimer = New-Object System.Timers.Timer
+$fastTimer.Interval = $script:FastUpdateInterval
+$fastTimer.AutoReset = $true
+Register-ObjectEvent -InputObject $fastTimer -EventName Elapsed -Action {
+    if ($script:WSClients.Count -eq 0) { return }
+    $now = Get-Date
+    if (($now - $script:LastFastUpdate).TotalMilliseconds -lt $script:FastUpdateInterval) { return }
+    $script:LastFastUpdate = $now
+    try {
+        $data = Get-FastMetrics
+        if ($data) { Broadcast-WebSocketData $data }
+    } catch {}
+} | Out-Null
+$fastTimer.Start()
+
+$rateCheckTimer = New-Object System.Timers.Timer
+$rateCheckTimer.Interval = 2000
+$rateCheckTimer.AutoReset = $true
+Register-ObjectEvent -InputObject $rateCheckTimer -EventName Elapsed -Action {
+    try {
+        $rateContent = Get-Content $script:refreshRateFile -Raw -ErrorAction SilentlyContinue
+        if ($rateContent) {
+            $newRate = [int]($rateContent.Trim())
+            if ($newRate -ge 500 -and $newRate -le 10000 -and $newRate -ne $script:FastUpdateInterval) {
+                $script:FastUpdateInterval = $newRate
+            }
+        }
+    } catch {}
+} | Out-Null
+$rateCheckTimer.Start()
+
+$cleanupTimer = New-Object System.Timers.Timer
+$cleanupTimer.Interval = 30000
+$cleanupTimer.AutoReset = $true
+Register-ObjectEvent -InputObject $cleanupTimer -EventName Elapsed -Action {
+    $dead = [System.Collections.Generic.List[object]]::new()
+    foreach ($ws in $script:WSClients) {
+        try { if ($ws.State -ne 'Open') { $dead.Add($ws) } } catch { $dead.Add($ws) }
+    }
+    foreach ($d in $dead) { try { $script:WSClients.Remove($d) } catch {} }
+    $errCount = $script:Errors.Count
+    if ($errCount -gt 100) { $script:Errors = @($script:Errors | Select-Object -Last 100) }
+    if ($script:DebugMode -and $dead.Count -gt 0) { Write-Host "[DEBUG] Cleanup removed $($dead.Count) stale WS clients" -ForegroundColor DarkGray }
+} | Out-Null
+$cleanupTimer.Start()
+
+if ($OPEN_BROWSER -and -not $Tray) {
+    Start-Process "http://${HOSTNAME}:$Port"
+}
+
+if ($Tray) {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+
+    $script:TrayIcon = $null
+    $script:WallpaperTimer = $null
+
+    function New-TrayIcon {
+        $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
+        $notifyIcon.Icon = [System.Drawing.SystemIcons]::Application
+        $notifyIcon.Text = "PCMON - System Monitor"
+        $notifyIcon.Visible = $true
+
+        $contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
+
+        $openItem = New-Object System.Windows.Forms.ToolStripMenuItem("Open Dashboard")
+        $openItem.Add_Click({ Start-Process "http://${HOSTNAME}:$Port" })
+        $contextMenu.Items.Add($openItem)
+
+        if ($Wallpaper) {
+            $wallpaperItem = New-Object System.Windows.Forms.ToolStripMenuItem("Open Wallpaper")
+            $wallpaperItem.Add_Click({ 
+                $wallpaperUrl = "http://${HOSTNAME}:$Port/wallpaper.html"
+                Start-Process $wallpaperUrl 
+            })
+            $contextMenu.Items.Add($wallpaperItem)
+        }
+
+        $exitItem = New-Object System.Windows.Forms.ToolStripMenuItem("Exit")
+        $exitItem.Add_Click({ 
+            $script:shuttingDown = $true
+            $listener.Stop()
+            if ($script:TrayIcon) { $script:TrayIcon.Visible = $false }
+            if ($script:WallpaperTimer) { $script:WallpaperTimer.Stop() }
+            exit 0
+        })
+        $contextMenu.Items.Add($exitItem)
+
+        $notifyIcon.ContextMenuStrip = $contextMenu
+
+        $notifyIcon.Add_DoubleClick({ Start-Process "http://${HOSTNAME}:$Port" })
+
+        return $notifyIcon
+    }
+
+    $script:TrayIcon = New-TrayIcon
+    Write-Host "  System tray icon enabled." -ForegroundColor Green
+}
+
+Get-CachedStaticData
+
+$script:refreshRateFile = Join-Path $env:TEMP "pcmon_refresh_rate.txt"
+$profilePathsFile = Join-Path $env:TEMP "pcmon_profile_paths.json"
+"500" | Out-File -FilePath $script:refreshRateFile -Encoding UTF8 -Force
+$profilePathsJson = @(
+    $PROFILE.AllUsersAllHosts,
+    $PROFILE.AllUsersCurrentHost,
+    $PROFILE.CurrentUserAllHosts,
+    $PROFILE.CurrentUserCurrentHost
+) | Where-Object { $_ } | ConvertTo-Json -Compress
+$profilePathsJson | Out-File -FilePath $profilePathsFile -Encoding UTF8 -Force
+
+Write-Host "  Initializing..." -NoNewline
+$sw2 = [Diagnostics.Stopwatch]::StartNew()
+$sw2.Start()
+if (Test-Path $cacheFile) {
+    try {
+        $script:LiveDataCache = Get-Content $cacheFile -Raw -ErrorAction Stop | ConvertFrom-Json
+        $script:LiveCacheTime = Get-Date
+        $initMs = $sw2.ElapsedMilliseconds
+        Write-Host " ${initMs}ms" -ForegroundColor Green -NoNewline
+        Write-Host " | Streaming ready" -ForegroundColor Cyan
+    } catch {
+        Write-Host " no cache, starting..." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host " first run..." -ForegroundColor Yellow
+}
+Write-Host ""
+
+
 $script:BroadcastInterval = 100
 
 try {
@@ -1419,9 +1417,9 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
                 $body = [System.IO.StreamReader]::new($request.InputStream).ReadToEnd()
                 if ($body) {
                     $parsed = $body | ConvertFrom-Json
-                    if ($parsed.rate -and $parsed.rate -ge 500 -and $parsed.rate -le 10000) {
-                        $parsed.rate | Out-File -FilePath $refreshRateFile -Encoding UTF8 -Force
-                        $json = @{ success = $true; rate = $parsed.rate } | ConvertTo-Json -Compress
+                    if ($parsed.refreshRate -and $parsed.refreshRate -ge 500 -and $parsed.refreshRate -le 10000) {
+                        $parsed.refreshRate | Out-File -FilePath $script:refreshRateFile -Encoding UTF8 -Force
+                        $json = @{ success = $true; rate = $parsed.refreshRate } | ConvertTo-Json -Compress
                     } else {
                         $json = @{ success = $false; error = "Rate must be between 500ms and 10000ms" } | ConvertTo-Json -Compress
                     }
@@ -1529,4 +1527,16 @@ Register-EngineEvent -SourceIdentifier ([System.Management.Automation.PsEngineEv
 } | Out-Null
 #endregion
 
-
+# -- main --
+# pcmon ΓÇö Built from backend/src/ modules
+# DO NOT EDIT THIS FILE DIRECTLY ΓÇö edit backend/src/ instead and rebuild
+#Requires -Version 5.1
+# Entry point: dot-source all modules in dependency order
+. "$PSScriptRoot/src/00-config.ps1"
+. "$PSScriptRoot/src/01-logging.ps1"
+. "$PSScriptRoot/src/02-http-helpers.ps1"
+. "$PSScriptRoot/src/03-actions.ps1"
+. "$PSScriptRoot/src/04-snapshots.ps1"
+. "$PSScriptRoot/src/05-collectors.ps1"
+. "$PSScriptRoot/src/06-background.ps1"
+. "$PSScriptRoot/src/07-server.ps1"

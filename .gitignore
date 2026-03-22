@@ -4,6 +4,7 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+nul
 
 # Logs
 *.log
@@ -18,8 +19,8 @@ Thumbs.db
 
 # Build output
 web/dist/
-web/dashboard.js
 build/
+build_backend.js
 
 # Lock files (optional - uncomment if you want to track)
 # bun.lock
