@@ -977,9 +977,10 @@ try {
         $path = $request.Url.LocalPath
 
         if ($path -eq "/health") {
-            $uptime = ((Get-Date) - $script:StartTime).TotalSeconds
             $ts = Get-Date -Format 'HH:mm:ss'
-            $json = @{ status = "ok"; ts = $ts; uptime_seconds = [math]::Round($uptime) } | ConvertTo-Json -Compress
+            $uptime = 0
+            try { $uptime = [math]::Round((New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds) } catch {}
+            $json = "{`"status`":`"ok`",`"ts`":`"$ts`",`"uptime_seconds`":$uptime}"
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
             $response.ContentType = "application/json"
             $response.ContentLength64 = $buffer.Length
@@ -987,16 +988,13 @@ try {
         }
         elseif ($path -eq "/errors") {
             $osCaption = if ($script:CachedStatic -and $script:CachedStatic.OS) { $script:CachedStatic.OS.Caption } else { 'Unknown' }
-            $errJson = @{
-                error_count = $script:Errors.Count
-                uptime = [math]::Round(((Get-Date) - $script:StartTime).TotalSeconds)
-                errors = @($script:Errors)[-20..-1]
-                sysinfo = @{
-                    ps_version = $PSVersionTable.PSVersion.ToString()
-                    os = $osCaption
-                    hostname = $env:COMPUTERNAME
-                }
-            } | ConvertTo-Json -Compress
+            $uptime = 0
+            try { $uptime = [math]::Round((New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds) } catch {}
+            $lastErrors = @()
+            if ($script:Errors.Count -gt 0) { $lastErrors = @($script:Errors)[-20..-1] }
+            $errList = ($lastErrors | Where-Object { $_ -is [string] -and $_ -ne "" } | ForEach-Object { '"' + $_.Replace('\','\\').Replace('"','\"') + '"' } | Join-String -Separator ',')
+            if ($errList -eq "") { $errList = "[]" } else { $errList = "[$errList]" }
+            $errJson = "{`"error_count`":$($script:Errors.Count),`"uptime`":$uptime,`"errors`":$errList,`"sysinfo`":{`"ps_version`":`"$($PSVersionTable.PSVersion.ToString())`",`"os`":`"$osCaption`",`"hostname`":`"$env:COMPUTERNAME`"}}"
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($errJson)
             $response.ContentType = "application/json"
             $response.ContentLength64 = $buffer.Length
@@ -1007,18 +1005,19 @@ try {
             Send-Response $response $buffer "text/plain"
         }
         elseif ($path -eq "/debug") {
-            $debug = @{
-                start_time = $script:StartTime.ToString('o')
-                cache_expiry = $script:StaticCacheExpiry.ToString('o')
-                cached_services_count = @($script:CachedStatic.Services).Count
-                cached_drives_count = @($script:CachedStatic.Drives).Count
-                commandlines_cached = $script:CommandLines.Count
-                static_files = @($script:StaticFiles.Keys).Count
-                ws_clients = $script:WSClients.Count
-                connection_method = $script:ConnectionMethod
-                broadcast_interval_ms = $script:WSBroadcastInterval
-            } | ConvertTo-Json -Compress
-            $buffer = [System.Text.Encoding]::UTF8.GetBytes($debug)
+            $staticFileCount = 0
+            try { $staticFileCount = [int](@($script:StaticFiles.Keys).Count) } catch {}
+            $wsClientCount = 0
+            try { $wsClientCount = [int]$script:WSClients.Count } catch {}
+            $connMethod = ""
+            try { $connMethod = [string]$script:ConnectionMethod } catch {}
+            $bcastMs = 0
+            try { $bcastMs = [int]$script:WSBroadcastInterval } catch {}
+            $cacheExpiry = ""
+            try { $cacheExpiry = [string]$script:StaticCacheExpiry.ToString('o') } catch {}
+            $startTime = [string](Get-Date).ToString('o')
+            $json = "{`"start_time`":`"$startTime`",`"cache_expiry`":`"$cacheExpiry`",`"cached_services_count`":$(@($script:CachedStatic.Services).Count),`"cached_drives_count`":$(@($script:CachedStatic.Drives).Count),`"commandlines_cached`":$($script:CommandLines.Count),`"static_files`":$staticFileCount,`"ws_clients`":$wsClientCount,`"connection_method`":`"$connMethod`",`"broadcast_interval_ms`":$bcastMs}"
+            $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
             $response.ContentType = "application/json"
             $response.ContentLength64 = $buffer.Length
             Send-Response $response $buffer "application/json"
@@ -1436,13 +1435,13 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
             Send-Response $response $buffer "application/json"
         }
         elseif ($path -eq "/api/info" -and $request.HttpMethod -eq "GET") {
-            $info = @{
-                method = $script:ConnectionMethod
-                uptime = [math]::Round(((Get-Date) - $script:StartTime).TotalSeconds)
-                ws_clients = $script:WSClients.Count
-                ps_version = $PSVersionTable.PSVersion.ToString()
-                hostname = $env:COMPUTERNAME
-            } | ConvertTo-Json -Compress
+            $uptime = 0
+            try { $uptime = [math]::Round((New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds) } catch {}
+            $conn = ""
+            try { $conn = [string]$script:ConnectionMethod } catch {}
+            $wsCount = 0
+            try { $wsCount = [int]$script:WSClients.Count } catch {}
+            $info = "{`"method`":`"$conn`",`"uptime`":$uptime,`"ws_clients`":$wsCount,`"ps_version`":`"$($PSVersionTable.PSVersion.ToString())`",`"hostname`":`"$env:COMPUTERNAME`"}"
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($info)
             $response.ContentType = "application/json"
             $response.ContentLength64 = $buffer.Length
