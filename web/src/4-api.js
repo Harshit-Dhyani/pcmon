@@ -124,7 +124,16 @@ async function saveConfig(cfg) {
 }
 
 async function saveThresholds(thresholds) {
-  return saveConfig({ thresholds });
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(thresholds)
+    });
+    const data = await res.json();
+    if (data.success) PCM.thresholds = { ...PCM.thresholds, ...thresholds };
+    return data.success;
+  } catch (e) { return false; }
 }
 
 /* ── Snapshots ────────────────────────────────────────────────────── */

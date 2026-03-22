@@ -345,8 +345,11 @@ function Broadcast-WebSocketData($data) {
     } catch {}
 }
 
-function Send-Response($response, $data, $type = "application/json") {
+function Send-Response($response, $data, $type = "application/json", $contentDisposition = $null) {
     try {
+        if ($null -ne $contentDisposition -and $contentDisposition -ne "") {
+            $response.Headers.Add("Content-Disposition", $contentDisposition)
+        }
         if ($null -ne $data) {
             if ($data -is [byte[]]) {
                 $response.ContentType = $type
@@ -509,7 +512,18 @@ function _CollectLiveData {
 
     $insights = @()
     $memAvailGB = [math]::Round($memAvailMB / 1024, 1)
-    $nonPagedMB = [math]::Round([double]$s['\MEMORY\POOL NONPAGED BYTES'] / 1MB, 0)
+    $pagedPoolBytes = [double]$s['\MEMORY\POOL PAGED BYTES']
+    if ($pagedPoolBytes -le 0 -or [double]::IsNaN($pagedPoolBytes)) {
+        try { $pagedPoolBytes = [double](Get-CimInstance Win32_PerfRawData_PerfOS_Memory -ErrorAction SilentlyContinue).PoolPagedBytes } catch { $pagedPoolBytes = 0 }
+    }
+    $nonPagedBytes = [double]$s['\MEMORY\POOL NONPAGED BYTES']
+    if ($nonPagedBytes -le 0 -or [double]::IsNaN($nonPagedBytes)) {
+        try { $nonPagedBytes = [double](Get-CimInstance Win32_PerfRawData_PerfOS_Memory -ErrorAction SilentlyContinue).PoolNonpagedBytes } catch { $nonPagedBytes = 0 }
+    }
+    $pagedPoolMB = [math]::Round($pagedPoolBytes / 1MB, 2)
+    $pagedPoolPct = if ($totalRAMMB -gt 0) { [math]::Round($pagedPoolMB / $totalRAMMB * 100, 1) } else { 0 }
+    $nonPagedMB = [math]::Round($nonPagedBytes / 1MB, 0)
+    $nonPagedPct = if ($totalRAMMB -gt 0) { [math]::Round($nonPagedMB / $totalRAMMB * 100, 1) } else { 0 }
     if ($memAvailMB -lt 1024) { $insights += "CRITICAL: Less than 1GB RAM available ($memAvailGB GB)." }
     elseif ($memAvailMB -lt 2048) { $insights += "Low available RAM ($memAvailGB GB)." }
     if ($commitPct -ge 90) { $insights += "Commit charge > 90%." }
@@ -556,7 +570,7 @@ function _CollectLiveData {
         ts = (Get-Date -Format 'HH:mm:ss'); hostname = $env:COMPUTERNAME; os_caption = $osCaption; total_procs = $processes.Count; ram_pct = $ramPct
         ram_used_gb = [math]::Round($usedRAMMB / 1024, 2); ram_total_gb = [math]::Round($totalRAMMB / 1024, 2); ram_avail_mb = $memAvailMB
         commit_pct = $commitPct; commit_gb = [math]::Round($commitBytes / 1GB, 2); limit_gb = [math]::Round($commitLimitBytes / 1GB, 2)
-        paged_pool_mb = [math]::Round([double]$s['\MEMORY\POOL PAGED BYTES'] / 1MB, 2); non_paged_mb = $nonPagedMB
+        paged_pool_mb = $pagedPoolMB; paged_pool_pct = $pagedPoolPct; non_paged_mb = $nonPagedMB; non_paged_pct = $nonPagedPct
         pages_sec = [math]::Round([double]$s['\MEMORY\PAGES/SEC'], 2); page_reads_sec = [math]::Round([double]$s['\MEMORY\PAGE READS/SEC'], 2)
         cpu_pct = $cpuPct; cpu_queue = [math]::Round([double]$s['\SYSTEM\PROCESSOR QUEUE LENGTH'], 2)
         disk_pct = [math]::Round([double]$s['\PHYSICALDISK(_TOTAL)\% DISK TIME'], 1); disk_queue = [math]::Round([double]$s['\PHYSICALDISK(_TOTAL)\AVG. DISK QUEUE LENGTH'], 2)
@@ -871,7 +885,18 @@ while ($true) {
         $psProfiles = @()
         try { foreach ($pp in $profilePaths) { if ($pp) { $exists = Test-Path $pp -ErrorAction SilentlyContinue; $sizeKb = if ($exists) { [math]::Round((Get-Item $pp -ErrorAction SilentlyContinue).Length / 1KB, 1) } else { $null }; $psProfiles += [PSCustomObject]@{ path = $pp; exists = $exists; size_kb = $sizeKb } } } } catch {}
         $memAvailGB = [math]::Round($memAvailMB / 1024, 1)
-        $nonPagedMB = [math]::Round([double]$s['\MEMORY\POOL NONPAGED BYTES'] / 1MB, 0)
+        $pagedPoolBytes = [double]$s['\MEMORY\POOL PAGED BYTES']
+        if ($pagedPoolBytes -le 0 -or [double]::IsNaN($pagedPoolBytes)) {
+            try { $pagedPoolBytes = [double](Get-CimInstance Win32_PerfRawData_PerfOS_Memory -ErrorAction SilentlyContinue).PoolPagedBytes } catch { $pagedPoolBytes = 0 }
+        }
+        $nonPagedBytes = [double]$s['\MEMORY\POOL NONPAGED BYTES']
+        if ($nonPagedBytes -le 0 -or [double]::IsNaN($nonPagedBytes)) {
+            try { $nonPagedBytes = [double](Get-CimInstance Win32_PerfRawData_PerfOS_Memory -ErrorAction SilentlyContinue).PoolNonpagedBytes } catch { $nonPagedBytes = 0 }
+        }
+        $pagedPoolMB = [math]::Round($pagedPoolBytes / 1MB, 2)
+        $pagedPoolPct = if ($totalRAMMB -gt 0) { [math]::Round($pagedPoolMB / $totalRAMMB * 100, 1) } else { 0 }
+        $nonPagedMB = [math]::Round($nonPagedBytes / 1MB, 0)
+        $nonPagedPct = if ($totalRAMMB -gt 0) { [math]::Round($nonPagedMB / $totalRAMMB * 100, 1) } else { 0 }
         $insights = @()
         if ($memAvailMB -lt 1024) { $insights += "CRITICAL: Less than 1GB RAM available ($memAvailGB GB)." }
         elseif ($memAvailMB -lt 2048) { $insights += "Low available RAM ($memAvailGB GB)." }
@@ -889,8 +914,7 @@ while ($true) {
             ts = (Get-Date -Format 'HH:mm:ss'); hostname = $env:COMPUTERNAME; os_caption = $os.Caption; total_procs = $procs.Count; ram_pct = $ramPct
             ram_used_gb = [math]::Round($usedRAMMB / 1024, 2); ram_total_gb = [math]::Round($totalRAMMB / 1024, 2); ram_avail_mb = $memAvailMB
             commit_pct = $commitPct; commit_gb = [math]::Round($commitBytes / 1GB, 2); limit_gb = [math]::Round($commitLimitBytes / 1GB, 2)
-        paged_pool_mb = [math]::Round([double]$s['\MEMORY\POOL PAGED BYTES'] / 1MB, 2); paged_pool_pct = if ($totalRAMMB -gt 0) { [math]::Round([double]$s['\MEMORY\POOL PAGED BYTES'] / 1MB / $totalRAMMB * 100, 1) } else { 0 }
-        non_paged_mb = $nonPagedMB; non_paged_pct = if ($totalRAMMB -gt 0) { [math]::Round($nonPagedMB / $totalRAMMB * 100, 1) } else { 0 }
+            paged_pool_mb = $pagedPoolMB; paged_pool_pct = $pagedPoolPct; non_paged_mb = $nonPagedMB; non_paged_pct = $nonPagedPct
             pages_sec = [math]::Round([double]$s['\MEMORY\PAGES/SEC'], 2); page_reads_sec = [math]::Round([double]$s['\MEMORY\PAGE READS/SEC'], 2)
             cpu_pct = $cpuPct; cpu_queue = [math]::Round([double]$s['\SYSTEM\PROCESSOR QUEUE LENGTH'], 2)
             disk_pct = [math]::Round([double]$s['\PHYSICALDISK(_TOTAL)\% DISK TIME'], 1); disk_queue = [math]::Round([double]$s['\PHYSICALDISK(_TOTAL)\AVG. DISK QUEUE LENGTH'], 2)
@@ -989,7 +1013,7 @@ try {
                 cached_services_count = @($script:CachedStatic.Services).Count
                 cached_drives_count = @($script:CachedStatic.Drives).Count
                 commandlines_cached = $script:CommandLines.Count
-                static_files = $script:StaticFiles.Keys
+                static_files = @($script:StaticFiles.Keys).Count
                 ws_clients = $script:WSClients.Count
                 connection_method = $script:ConnectionMethod
                 broadcast_interval_ms = $script:WSBroadcastInterval
@@ -1109,7 +1133,30 @@ try {
                 $response.ContentLength64 = 0
             }
         }
+        elseif ($path -match '^/api/snapshots/([^/]+)/delete$' -and $request.HttpMethod -eq "POST") {
+            $snapId = $matches[1]
+            $files = Get-SnapshotFiles
+            $snapshotFile = $files | Where-Object { $_.BaseName -eq "snapshot_$snapId" } | Select-Object -First 1
+            if ($snapshotFile) {
+                try {
+                    Remove-Item $snapshotFile.FullName -Force -ErrorAction Stop
+                    $json = @{ success = $true } | ConvertTo-Json -Compress
+                } catch {
+                    $json = @{ success = $false; error = "Failed to delete" } | ConvertTo-Json -Compress
+                }
+            } else {
+                $json = @{ success = $false; error = "Snapshot not found" } | ConvertTo-Json -Compress
+            }
+            $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
+            Send-Response $response $buffer "application/json"
+        }
         elseif ($path -match '^/api/process/(\d+)/kill$' -and $request.HttpMethod -eq "POST") {
+            if ($request.Headers.Get("X-PCMON-Confirm") -ne "1") {
+                $response.StatusCode = 403
+                $response.ContentLength64 = 0
+                Send-Response $response $null "application/json"
+                continue
+            }
             $pid = [int]$matches[1]
             $result = Stop-ProcessById -ProcessId $pid -Force
             $json = $result | ConvertTo-Json -Compress
@@ -1119,6 +1166,12 @@ try {
             Send-Response $response $buffer "application/json"
         }
         elseif ($path -match '^/api/process/(\d+)/suspend$' -and $request.HttpMethod -eq "POST") {
+            if ($request.Headers.Get("X-PCMON-Confirm") -ne "1") {
+                $response.StatusCode = 403
+                $response.ContentLength64 = 0
+                Send-Response $response $null "application/json"
+                continue
+            }
             $pid = [int]$matches[1]
             $result = Suspend-ProcessById -ProcessId $pid
             $json = $result | ConvertTo-Json -Compress
@@ -1128,6 +1181,12 @@ try {
             Send-Response $response $buffer "application/json"
         }
         elseif ($path -match '^/api/process/(\d+)/resume$' -and $request.HttpMethod -eq "POST") {
+            if ($request.Headers.Get("X-PCMON-Confirm") -ne "1") {
+                $response.StatusCode = 403
+                $response.ContentLength64 = 0
+                Send-Response $response $null "application/json"
+                continue
+            }
             $pid = [int]$matches[1]
             $result = Resume-ProcessById -ProcessId $pid
             $json = $result | ConvertTo-Json -Compress

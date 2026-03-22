@@ -302,8 +302,7 @@ function renderAll(d) {
   /* Error banner */
   const psErrEl = EL('ps-errors');
   if (psErrEl) {
-    const psErrBanner = EL('ps-errors');
-    if (data.error_count > 0) psErrEl.innerHTML = '<div class="err-banner">PowerShell errors: ' + data.error_count + ' | <a href="/logs" target="_blank" rel="noopener">View logs</a> | <a href="/debug" target="_blank" rel="noopener">Debug</a></div>';
+    if (d.error_count > 0) psErrEl.innerHTML = '<div class="err-banner">PowerShell errors: ' + d.error_count + ' | <a href="/logs" target="_blank" rel="noopener">View logs</a> | <a href="/debug" target="_blank" rel="noopener">Debug</a></div>';
     else psErrEl.innerHTML = '';
   }
 }
