@@ -18,6 +18,8 @@ function Get-CounterSampleValue {
     }
     return [double]$matches[0].CookedValue
 }
+# These helpers are duplicated into the background collector on purpose because
+# this script is emitted as a standalone worker process.
 function Get-LinkSpeedBps {
     param([string]$LinkSpeed)
     if ([string]::IsNullOrWhiteSpace($LinkSpeed)) { return 0 }
@@ -81,6 +83,8 @@ while ($true) {
     $cycleCount++
     try { $bgRefreshRate = [int](Get-Content $refreshRateFile -Raw -ErrorAction SilentlyContinue) } catch {}
     if ($bgRefreshRate -lt 500) { $bgRefreshRate = 500 }
+    # Heavy collectors run less often than fast counters so the live dashboard
+    # feels responsive without clearing slower sections between cycles.
     $heavyInterval = [math]::Max([int][math]::Ceiling(4000 / $bgRefreshRate), 1)
     $staticInterval = [math]::Max([int][math]::Ceiling(30000 / $bgRefreshRate), 1)
     $isInitialCycle = $firstRun
@@ -193,6 +197,8 @@ while ($true) {
             $netAdapterRows += [PSCustomObject]@{ name = $adapter.Name; description = $adapter.InterfaceDescription; status = $adapter.Status; link_speed = [string]$adapter.LinkSpeed; kind = $kind; media_type = if ($adapter.PhysicalMediaType) { [string]$adapter.PhysicalMediaType } else { [string]$adapter.MediaType }; link_speed_bps = $linkSpeedBps }
         }
         $activeNetAdapters = @($netAdapterRows | Where-Object { $_.status -eq 'Up' })
+        # Pick one adapter for the overview card, but keep the full adapter list
+        # for the system table.
         $primaryNetAdapter = if ($activeNetAdapters.Count -gt 0) { @($activeNetAdapters | Sort-Object link_speed_bps -Descending | Select-Object -First 1)[0] } elseif ($netAdapterRows.Count -gt 0) { @($netAdapterRows | Sort-Object link_speed_bps -Descending | Select-Object -First 1)[0] } else { $null }
         $network = @{ status_text = if ($netAdapterRows.Count -eq 0) { 'No physical adapters detected' } elseif ($activeNetAdapters.Count -eq 0) { 'No active physical adapter' } else { 'Collector active' }; busiest_adapter = if ($primaryNetAdapter) { $primaryNetAdapter.name } else { $null }; primary_type = if ($primaryNetAdapter) { $primaryNetAdapter.kind } else { 'Unknown' }; adapter_count = $netAdapterRows.Count; adapters = $netAdapterRows }
         $insights = @()

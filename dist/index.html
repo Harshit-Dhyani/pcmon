@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- Built 2026-03-24 09:17:14 v1.0.0 | Source: src/web/src/ -->
+<!-- Built 2026-03-24 09:37:07 v1.0.0 | Source: src/web/src/ -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
@@ -1095,6 +1095,8 @@ tbody td {
     <div class="pnl" style="margin-top:14px">
       <div class="pnl-head"><span class="pnl-title">Current Issues</span></div>
       <div class="pnl-body">
+        <!-- Lead with the single highest-signal issue so the user does not have
+             to scan every card before seeing the likely bottleneck. -->
         <div class="issue-hero" id="issue-hero">
           <div class="issue-kicker">Main bottleneck</div>
           <div class="issue-title" id="issue-primary-title">Waiting for live data…</div>
@@ -1393,6 +1395,8 @@ tbody td {
     </div>
     <div class="pnl" style="margin-top:16px">
       <div class="pnl-head"><span class="pnl-title">Network Adapters</span></div>
+      <!-- The adapter table is intentionally on the System page because it is
+           machine inventory plus current link state, not just a live throughput chart. -->
       <div class="tbl-scroll">
         <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="net-tbl-sk">
           <div class="sk sk-row"></div>
@@ -1724,6 +1728,8 @@ function showAllSkeletons() {
   const cardIds = ['sc-ram', 'sc-cpu', 'sc-disk', 'sc-cm', 'r-sc-ram', 'r-sc-cm', 'r-sc-pg', 'c-sc-cpu', 'c-sc-pg'];
   cardIds.forEach(id => { const el = EL(id); if (el) el.classList.add('loading'); });
   const skPairs = [
+    // Keep skeleton mappings centralized so newly-added tables do not get stuck
+    // in loading state after render.
     ['ov-tbl-sk', 'ov-tbl'], ['r-tbl-sk', 'r-tbl'], ['c-tbl-sk', 'c-tbl'],
     ['sus-tbl-sk', 'sus-tbl'], ['svc-tbl-sk', 'svc-tbl'],
     ['startup-tbl-sk', 'startup-tbl'], ['pagefile-tbl-sk', 'pagefile-tbl'],
@@ -2079,6 +2085,7 @@ async function fetchData() {
   if (PCM.connectionMethod === 'http') PCM.pollInFlight = true;
   const t0 = performance.now();
   try {
+    // Live data must bypass browser caches or the refresh selector becomes dishonest.
     const res = await fetch('/data', { cache: 'no-store' });
     PCM.perf.fetchMs = performance.now() - t0;
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -2105,6 +2112,8 @@ async function fetchData() {
 /* ── Bootstrap ────────────────────────────────────────────────────── */
 async function loadBootstrap() {
   try {
+    // Bootstrap pulls both the first live sample and thresholds together so the
+    // first render already has real data plus alert configuration.
     const [dataRes, configRes] = await Promise.all([
       fetch('/data', { cache: 'no-store' }),
       fetch('/api/config', { cache: 'no-store' })
@@ -2296,6 +2305,7 @@ function renderDrives(container, disks) {
 function renderGPUAdapters(container, gpu) {
   if (!container) return;
   container.innerHTML = '';
+  // Show a polished unsupported state instead of rendering misleading zeroes.
   if (!gpu || !gpu.available) { container.innerHTML = '<div class="note">No GPU data available</div>'; return; }
   (gpu.adapters || []).forEach(a => {
     const pct = a.pct || 0;
@@ -2346,6 +2356,7 @@ function renderTable(tbl, rows, cols, opts = {}) {
   if (opts.actions) { const th = document.createElement('th'); th.textContent = 'Actions'; hdr.appendChild(th); }
   const tbody = tbl.createTBody();
   const maxRows = opts.maxRows || 30;
+  // Empty tables should explain why they are empty instead of looking broken.
   if (!rows || rows.length === 0) {
     const tr = tbody.insertRow();
     const td = tr.insertCell();
@@ -2606,6 +2617,8 @@ function renderAll(d) {
     hideSkeleton('profiles-tbl-sk', 'profiles-tbl');
 
     const networkAdapters = ((d.network && d.network.adapters) || []).slice(0, 12);
+    // This table is inventory/state, so it updates with the throttled table cadence
+    // instead of every fast metric tick.
     renderTable(EL('net-tbl'), networkAdapters.map(n => [n.name || '?', n.kind || '?', n.status || '?', n.link_speed || '—', n.media_type || '—']), ['Name', 'Type', 'Status', 'Link', 'Media'], { emptyText: 'No physical network adapters were detected.' });
     hideSkeleton('net-tbl-sk', 'net-tbl');
 

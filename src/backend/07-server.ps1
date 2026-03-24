@@ -208,6 +208,8 @@ if ($Tray) {
 
 $script:refreshRateFile = Join-Path $env:TEMP "pcmon_refresh_rate_$Port.txt"
 $profilePathsFile = Join-Path $env:TEMP "pcmon_profile_paths_$Port.json"
+# Seed background-worker inputs before the first request so the worker can start
+# immediately without guessing defaults.
 "500" | Out-File -FilePath $script:refreshRateFile -Encoding UTF8 -Force
 $profilePathsJson = @(
     $PROFILE.AllUsersAllHosts,
@@ -252,6 +254,7 @@ try {
         $path = $request.Url.LocalPath
 
         if ($path -eq "/health") {
+            # Keep /health cheap and always available, even if the cache is still warming.
             $ts = Get-Date -Format 'HH:mm:ss'
             $uptime = 0
             try { $uptime = [math]::Round((New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds) } catch {}

@@ -20,6 +20,7 @@ async function fetchData() {
   if (PCM.connectionMethod === 'http') PCM.pollInFlight = true;
   const t0 = performance.now();
   try {
+    // Live data must bypass browser caches or the refresh selector becomes dishonest.
     const res = await fetch('/data', { cache: 'no-store' });
     PCM.perf.fetchMs = performance.now() - t0;
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -46,6 +47,8 @@ async function fetchData() {
 /* ── Bootstrap ────────────────────────────────────────────────────── */
 async function loadBootstrap() {
   try {
+    // Bootstrap pulls both the first live sample and thresholds together so the
+    // first render already has real data plus alert configuration.
     const [dataRes, configRes] = await Promise.all([
       fetch('/data', { cache: 'no-store' }),
       fetch('/api/config', { cache: 'no-store' })

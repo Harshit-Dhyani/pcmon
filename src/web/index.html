@@ -182,6 +182,8 @@
     <div class="pnl" style="margin-top:14px">
       <div class="pnl-head"><span class="pnl-title">Current Issues</span></div>
       <div class="pnl-body">
+        <!-- Lead with the single highest-signal issue so the user does not have
+             to scan every card before seeing the likely bottleneck. -->
         <div class="issue-hero" id="issue-hero">
           <div class="issue-kicker">Main bottleneck</div>
           <div class="issue-title" id="issue-primary-title">Waiting for live data…</div>
@@ -480,6 +482,8 @@
     </div>
     <div class="pnl" style="margin-top:16px">
       <div class="pnl-head"><span class="pnl-title">Network Adapters</span></div>
+      <!-- The adapter table is intentionally on the System page because it is
+           machine inventory plus current link state, not just a live throughput chart. -->
       <div class="tbl-scroll">
         <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="net-tbl-sk">
           <div class="sk sk-row"></div>

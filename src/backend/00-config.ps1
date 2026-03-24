@@ -47,6 +47,7 @@ $ErrorActionPreference = "Continue"
 $script:ErrorCount = 0
 $HOSTNAME = "localhost"
 $OPEN_BROWSER = -not ($NoOpen -or $ApiOnly)
+# Auto-bump the listener port when the requested one is already occupied.
 for ($i = 0; $i -lt 20; $i++) {
     $test = New-Object System.Net.HttpListener
     $test.Prefixes.Add("http://${HOSTNAME}:$Port/")
@@ -72,11 +73,15 @@ $script:ConnectionMethod = "polling"
 $script:WSClients = [System.Collections.Generic.List[object]]::new()
 $script:WSLastSend = [DateTime]::MinValue
 $script:WSBroadcastInterval = 500
+# Session peaks are tracked in memory so the dashboard can show honest "max seen"
+# values without persisting machine state to disk.
 $script:SessionMaxCpuMhz = 0
 $script:SessionMaxCpuTempC = $null
 $script:SessionMaxCpuPowerW = $null
 $SNAPSHOTS_DIR = Join-Path $SCRIPT_DIR "snapshots"
 if (-not (Test-Path $SNAPSHOTS_DIR)) { New-Item -ItemType Directory -Path $SNAPSHOTS_DIR -Force | Out-Null }
+# Cache and log files are port-scoped so multiple local pcmon instances do not
+# overwrite each other's state.
 $cacheFile = Join-Path $env:TEMP "pcmon_live_cache_$Port.json"
 
 $PROTECTED_PROCESSES = @('System', 'Idle', 'csrss', 'smss', 'wininit', 'services', 'lsass', 'svchost', 'winlogon', 'dwm', 'explorer', 'taskhostw', 'sihost', 'ctfmon', 'fontdrvhost', 'Memory Compression')

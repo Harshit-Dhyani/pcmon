@@ -94,6 +94,8 @@ function showAllSkeletons() {
   const cardIds = ['sc-ram', 'sc-cpu', 'sc-disk', 'sc-cm', 'r-sc-ram', 'r-sc-cm', 'r-sc-pg', 'c-sc-cpu', 'c-sc-pg'];
   cardIds.forEach(id => { const el = EL(id); if (el) el.classList.add('loading'); });
   const skPairs = [
+    // Keep skeleton mappings centralized so newly-added tables do not get stuck
+    // in loading state after render.
     ['ov-tbl-sk', 'ov-tbl'], ['r-tbl-sk', 'r-tbl'], ['c-tbl-sk', 'c-tbl'],
     ['sus-tbl-sk', 'sus-tbl'], ['svc-tbl-sk', 'svc-tbl'],
     ['startup-tbl-sk', 'startup-tbl'], ['pagefile-tbl-sk', 'pagefile-tbl'],

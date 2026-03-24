@@ -47,6 +47,7 @@ $ErrorActionPreference = "Continue"
 $script:ErrorCount = 0
 $HOSTNAME = "localhost"
 $OPEN_BROWSER = -not ($NoOpen -or $ApiOnly)
+# Auto-bump the listener port when the requested one is already occupied.
 for ($i = 0; $i -lt 20; $i++) {
     $test = New-Object System.Net.HttpListener
     $test.Prefixes.Add("http://${HOSTNAME}:$Port/")
@@ -72,11 +73,15 @@ $script:ConnectionMethod = "polling"
 $script:WSClients = [System.Collections.Generic.List[object]]::new()
 $script:WSLastSend = [DateTime]::MinValue
 $script:WSBroadcastInterval = 500
+# Session peaks are tracked in memory so the dashboard can show honest "max seen"
+# values without persisting machine state to disk.
 $script:SessionMaxCpuMhz = 0
 $script:SessionMaxCpuTempC = $null
 $script:SessionMaxCpuPowerW = $null
 $SNAPSHOTS_DIR = Join-Path $SCRIPT_DIR "snapshots"
 if (-not (Test-Path $SNAPSHOTS_DIR)) { New-Item -ItemType Directory -Path $SNAPSHOTS_DIR -Force | Out-Null }
+# Cache and log files are port-scoped so multiple local pcmon instances do not
+# overwrite each other's state.
 $cacheFile = Join-Path $env:TEMP "pcmon_live_cache_$Port.json"
 
 $PROTECTED_PROCESSES = @('System', 'Idle', 'csrss', 'smss', 'wininit', 'services', 'lsass', 'svchost', 'winlogon', 'dwm', 'explorer', 'taskhostw', 'sihost', 'ctfmon', 'fontdrvhost', 'Memory Compression')
@@ -389,6 +394,8 @@ function Get-CounterSampleValue {
     return [double]$matches[0].CookedValue
 }
 
+# Convert Windows link-speed strings such as "260 Mbps" into a sortable numeric
+# value so the UI can pick a stable primary adapter.
 function Get-LinkSpeedBps {
     param([string]$LinkSpeed)
     if ([string]::IsNullOrWhiteSpace($LinkSpeed)) { return 0 }
@@ -405,6 +412,7 @@ function Get-LinkSpeedBps {
     return 0
 }
 
+# Normalize adapter families into coarse types that are easy to read in the UI.
 function Get-AdapterKind {
     param($Adapter)
     $joined = @(
@@ -421,6 +429,8 @@ function Get-AdapterKind {
 function Get-LiveData {
     $now = Get-Date
     $cacheAge = ($now - $script:LiveCacheTime).TotalSeconds
+    # Keep HTTP polling responsive by returning very recent in-memory samples
+    # instead of re-collecting on every request.
     if ($cacheAge -lt 0.9 -and $null -ne $script:LiveDataCache) {
         return $script:LiveDataCache
     }
@@ -518,6 +528,8 @@ function _CollectLiveData {
     $secGroup.ws_mb = [math]::Round($secGroup.ws_mb, 1)
 
     $adapters = if ($cs.Video) { $cs.Video } else { @() }
+    # "available" means an adapter exists. Engine telemetry is tracked separately
+    # so we can distinguish unsupported counters from a real 0% workload.
     $gpuResult = @{ available = $false; adapters = @(); eng_type_totals = @{ '3d' = 0; 'videodecode' = 0; 'videoprocessing' = 0; 'copy' = 0; 'videoencode' = 0; 'security' = 0; 'vr' = 0; 'other' = 0 }; dedicated_used_gb = 0; dedicated_total_gb = 0; engines_supported = $false; status_text = 'No GPU adapters detected' }
     foreach ($adapter in $adapters) {
         $totalGB = if ($adapter.AdapterRAM -and $adapter.AdapterRAM -gt 0) { [math]::Round($adapter.AdapterRAM / 1GB, 1) } else { 0 }
@@ -553,6 +565,8 @@ function _CollectLiveData {
         }
     }
     $activeNetAdapters = @($netAdapterRows | Where-Object { $_.status -eq 'Up' })
+    # Prefer an active adapter, then fall back to the fastest known physical
+    # adapter so the summary panel stays populated even while disconnected.
     $primaryNetAdapter = if ($activeNetAdapters.Count -gt 0) {
         @($activeNetAdapters | Sort-Object link_speed_bps -Descending | Select-Object -First 1)[0]
     } elseif ($netAdapterRows.Count -gt 0) {
@@ -598,6 +612,8 @@ function _CollectLiveData {
         }
     }
     if ($cpuFreqCounterMhz -gt 0) {
+        # The Processor Information counter is more truthful than the static CIM
+        # CurrentClockSpeed field, so use it when Windows exposes it.
         $cpuCurrentMhz = $cpuFreqCounterMhz
     } elseif ($cpuBaseMhz -gt 0 -and $cpuPerfPct -gt 0) {
         $cpuCurrentMhz = [int][math]::Round(($cpuBaseMhz * $cpuPerfPct) / 100, 0)
@@ -706,6 +722,8 @@ function Get-CounterSampleValue {
     }
     return [double]$matches[0].CookedValue
 }
+# These helpers are duplicated into the background collector on purpose because
+# this script is emitted as a standalone worker process.
 function Get-LinkSpeedBps {
     param([string]$LinkSpeed)
     if ([string]::IsNullOrWhiteSpace($LinkSpeed)) { return 0 }
@@ -769,6 +787,8 @@ while ($true) {
     $cycleCount++
     try { $bgRefreshRate = [int](Get-Content $refreshRateFile -Raw -ErrorAction SilentlyContinue) } catch {}
     if ($bgRefreshRate -lt 500) { $bgRefreshRate = 500 }
+    # Heavy collectors run less often than fast counters so the live dashboard
+    # feels responsive without clearing slower sections between cycles.
     $heavyInterval = [math]::Max([int][math]::Ceiling(4000 / $bgRefreshRate), 1)
     $staticInterval = [math]::Max([int][math]::Ceiling(30000 / $bgRefreshRate), 1)
     $isInitialCycle = $firstRun
@@ -881,6 +901,8 @@ while ($true) {
             $netAdapterRows += [PSCustomObject]@{ name = $adapter.Name; description = $adapter.InterfaceDescription; status = $adapter.Status; link_speed = [string]$adapter.LinkSpeed; kind = $kind; media_type = if ($adapter.PhysicalMediaType) { [string]$adapter.PhysicalMediaType } else { [string]$adapter.MediaType }; link_speed_bps = $linkSpeedBps }
         }
         $activeNetAdapters = @($netAdapterRows | Where-Object { $_.status -eq 'Up' })
+        # Pick one adapter for the overview card, but keep the full adapter list
+        # for the system table.
         $primaryNetAdapter = if ($activeNetAdapters.Count -gt 0) { @($activeNetAdapters | Sort-Object link_speed_bps -Descending | Select-Object -First 1)[0] } elseif ($netAdapterRows.Count -gt 0) { @($netAdapterRows | Sort-Object link_speed_bps -Descending | Select-Object -First 1)[0] } else { $null }
         $network = @{ status_text = if ($netAdapterRows.Count -eq 0) { 'No physical adapters detected' } elseif ($activeNetAdapters.Count -eq 0) { 'No active physical adapter' } else { 'Collector active' }; busiest_adapter = if ($primaryNetAdapter) { $primaryNetAdapter.name } else { $null }; primary_type = if ($primaryNetAdapter) { $primaryNetAdapter.kind } else { 'Unknown' }; adapter_count = $netAdapterRows.Count; adapters = $netAdapterRows }
         $insights = @()
@@ -1176,6 +1198,8 @@ if ($Tray) {
 
 $script:refreshRateFile = Join-Path $env:TEMP "pcmon_refresh_rate_$Port.txt"
 $profilePathsFile = Join-Path $env:TEMP "pcmon_profile_paths_$Port.json"
+# Seed background-worker inputs before the first request so the worker can start
+# immediately without guessing defaults.
 "500" | Out-File -FilePath $script:refreshRateFile -Encoding UTF8 -Force
 $profilePathsJson = @(
     $PROFILE.AllUsersAllHosts,
@@ -1220,6 +1244,7 @@ try {
         $path = $request.Url.LocalPath
 
         if ($path -eq "/health") {
+            # Keep /health cheap and always available, even if the cache is still warming.
             $ts = Get-Date -Format 'HH:mm:ss'
             $uptime = 0
             try { $uptime = [math]::Round((New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds) } catch {}

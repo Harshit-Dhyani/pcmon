@@ -22,6 +22,7 @@ function renderDrives(container, disks) {
 function renderGPUAdapters(container, gpu) {
   if (!container) return;
   container.innerHTML = '';
+  // Show a polished unsupported state instead of rendering misleading zeroes.
   if (!gpu || !gpu.available) { container.innerHTML = '<div class="note">No GPU data available</div>'; return; }
   (gpu.adapters || []).forEach(a => {
     const pct = a.pct || 0;
@@ -72,6 +73,7 @@ function renderTable(tbl, rows, cols, opts = {}) {
   if (opts.actions) { const th = document.createElement('th'); th.textContent = 'Actions'; hdr.appendChild(th); }
   const tbody = tbl.createTBody();
   const maxRows = opts.maxRows || 30;
+  // Empty tables should explain why they are empty instead of looking broken.
   if (!rows || rows.length === 0) {
     const tr = tbody.insertRow();
     const td = tr.insertCell();
@@ -332,6 +334,8 @@ function renderAll(d) {
     hideSkeleton('profiles-tbl-sk', 'profiles-tbl');
 
     const networkAdapters = ((d.network && d.network.adapters) || []).slice(0, 12);
+    // This table is inventory/state, so it updates with the throttled table cadence
+    // instead of every fast metric tick.
     renderTable(EL('net-tbl'), networkAdapters.map(n => [n.name || '?', n.kind || '?', n.status || '?', n.link_speed || '—', n.media_type || '—']), ['Name', 'Type', 'Status', 'Link', 'Media'], { emptyText: 'No physical network adapters were detected.' });
     hideSkeleton('net-tbl-sk', 'net-tbl');
 

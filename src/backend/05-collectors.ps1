@@ -45,6 +45,8 @@ function Get-CounterSampleValue {
     return [double]$matches[0].CookedValue
 }
 
+# Convert Windows link-speed strings such as "260 Mbps" into a sortable numeric
+# value so the UI can pick a stable primary adapter.
 function Get-LinkSpeedBps {
     param([string]$LinkSpeed)
     if ([string]::IsNullOrWhiteSpace($LinkSpeed)) { return 0 }
@@ -61,6 +63,7 @@ function Get-LinkSpeedBps {
     return 0
 }
 
+# Normalize adapter families into coarse types that are easy to read in the UI.
 function Get-AdapterKind {
     param($Adapter)
     $joined = @(
@@ -77,6 +80,8 @@ function Get-AdapterKind {
 function Get-LiveData {
     $now = Get-Date
     $cacheAge = ($now - $script:LiveCacheTime).TotalSeconds
+    # Keep HTTP polling responsive by returning very recent in-memory samples
+    # instead of re-collecting on every request.
     if ($cacheAge -lt 0.9 -and $null -ne $script:LiveDataCache) {
         return $script:LiveDataCache
     }
@@ -174,6 +179,8 @@ function _CollectLiveData {
     $secGroup.ws_mb = [math]::Round($secGroup.ws_mb, 1)
 
     $adapters = if ($cs.Video) { $cs.Video } else { @() }
+    # "available" means an adapter exists. Engine telemetry is tracked separately
+    # so we can distinguish unsupported counters from a real 0% workload.
     $gpuResult = @{ available = $false; adapters = @(); eng_type_totals = @{ '3d' = 0; 'videodecode' = 0; 'videoprocessing' = 0; 'copy' = 0; 'videoencode' = 0; 'security' = 0; 'vr' = 0; 'other' = 0 }; dedicated_used_gb = 0; dedicated_total_gb = 0; engines_supported = $false; status_text = 'No GPU adapters detected' }
     foreach ($adapter in $adapters) {
         $totalGB = if ($adapter.AdapterRAM -and $adapter.AdapterRAM -gt 0) { [math]::Round($adapter.AdapterRAM / 1GB, 1) } else { 0 }
@@ -209,6 +216,8 @@ function _CollectLiveData {
         }
     }
     $activeNetAdapters = @($netAdapterRows | Where-Object { $_.status -eq 'Up' })
+    # Prefer an active adapter, then fall back to the fastest known physical
+    # adapter so the summary panel stays populated even while disconnected.
     $primaryNetAdapter = if ($activeNetAdapters.Count -gt 0) {
         @($activeNetAdapters | Sort-Object link_speed_bps -Descending | Select-Object -First 1)[0]
     } elseif ($netAdapterRows.Count -gt 0) {
@@ -254,6 +263,8 @@ function _CollectLiveData {
         }
     }
     if ($cpuFreqCounterMhz -gt 0) {
+        # The Processor Information counter is more truthful than the static CIM
+        # CurrentClockSpeed field, so use it when Windows exposes it.
         $cpuCurrentMhz = $cpuFreqCounterMhz
     } elseif ($cpuBaseMhz -gt 0 -and $cpuPerfPct -gt 0) {
         $cpuCurrentMhz = [int][math]::Round(($cpuBaseMhz * $cpuPerfPct) / 100, 0)
