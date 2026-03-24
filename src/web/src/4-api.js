@@ -20,7 +20,7 @@ async function fetchData() {
   if (PCM.connectionMethod === 'http') PCM.pollInFlight = true;
   const t0 = performance.now();
   try {
-    const res = await fetch('/data');
+    const res = await fetch('/data', { cache: 'no-store' });
     PCM.perf.fetchMs = performance.now() - t0;
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
@@ -47,8 +47,8 @@ async function fetchData() {
 async function loadBootstrap() {
   try {
     const [dataRes, configRes] = await Promise.all([
-      fetch('/data'),
-      fetch('/api/config')
+      fetch('/data', { cache: 'no-store' }),
+      fetch('/api/config', { cache: 'no-store' })
     ]);
     const data = await dataRes.json();
     const config = await configRes.json();
@@ -104,7 +104,7 @@ async function resumeProcess(pid, name) {
 /* ── Config ───────────────────────────────────────────────────────── */
 async function fetchConfig() {
   try {
-    const res = await fetch('/api/config');
+    const res = await fetch('/api/config', { cache: 'no-store' });
     const data = await res.json();
     PCM.thresholds = { ...PCM.DEFAULT_THRESHOLDS, ...(data.thresholds || {}) };
   } catch (e) {}
@@ -139,7 +139,7 @@ async function saveThresholds(thresholds) {
 /* ── Snapshots ────────────────────────────────────────────────────── */
 async function fetchSnapshots() {
   try {
-    const res = await fetch('/api/snapshots');
+    const res = await fetch('/api/snapshots', { cache: 'no-store' });
     return await res.json();
   } catch (e) { return []; }
 }
@@ -167,7 +167,7 @@ async function compareSnapshots(id) {
 
 async function fetchReport() {
   try {
-    const res = await fetch('/api/report');
+    const res = await fetch('/api/report', { cache: 'no-store' });
     return await res.text();
   } catch (e) { return '<p>Error loading report</p>'; }
 }
@@ -188,7 +188,7 @@ async function fetchReportDownload() {
 /* ── Errors ───────────────────────────────────────────────────────── */
 async function fetchErrors() {
   try {
-    const res = await fetch('/errors');
+    const res = await fetch('/errors', { cache: 'no-store' });
     const data = await res.json();
     PCM.errors = data.errors || [];
     updateDebugPanel(PCM.cachedData);

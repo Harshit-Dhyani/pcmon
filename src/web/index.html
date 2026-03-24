@@ -178,6 +178,20 @@
         </div>
       </div>
     </div>
+
+    <div class="pnl" style="margin-top:14px">
+      <div class="pnl-head"><span class="pnl-title">Current Issues</span></div>
+      <div class="pnl-body">
+        <div class="issue-hero" id="issue-hero">
+          <div class="issue-kicker">Main bottleneck</div>
+          <div class="issue-title" id="issue-primary-title">Waiting for live data…</div>
+          <div class="issue-desc" id="issue-primary-desc">pcmon will surface the most important issue first.</div>
+        </div>
+        <div id="insights-list">
+          <div class="note">Waiting for system insights…</div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- ── RAM ──────────────────────────────────────────────────────── -->
@@ -261,6 +275,18 @@
         <div class="scard-top"><span class="scard-lbl">Disk Queue</span></div>
         <div class="sval ok" id="c-queue">—</div>
         <div class="ssub">Pending I/O requests</div>
+      </div>
+    </div>
+
+    <div class="pnl" style="margin-bottom:16px">
+      <div class="pnl-head"><span class="pnl-title">CPU Details</span></div>
+      <div class="pnl-body" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">
+        <div class="sys-row"><span>Model</span><span id="cpu-name">—</span></div>
+        <div class="sys-row"><span>Sockets / Cores / Logical</span><span id="cpu-topology">—</span></div>
+        <div class="sys-row"><span>Base / Current Clock</span><span id="cpu-clocks">—</span></div>
+        <div class="sys-row"><span>Session Max Clock</span><span id="cpu-max-clock">—</span></div>
+        <div class="sys-row"><span>Temperature</span><span id="cpu-temp">Unavailable</span></div>
+        <div class="sys-row"><span>Package Power</span><span id="cpu-power">Unavailable</span></div>
       </div>
     </div>
 
@@ -450,6 +476,15 @@
           <div class="sk sk-row"></div>
         </div>
         <table id="profiles-tbl" style="display:none"></table>
+      </div>
+    </div>
+    <div class="pnl" style="margin-top:16px">
+      <div class="pnl-head"><span class="pnl-title">Network Adapters</span></div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="net-tbl-sk">
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="net-tbl" style="display:none"></table>
       </div>
     </div>
   </div>

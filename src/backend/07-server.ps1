@@ -39,7 +39,7 @@ $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://${HOSTNAME}:$Port/")
 $listener.TimeoutManager.RequestQueue = New-Object System.TimeSpan(0, 2, 0)
 
-$DIST_INDEX = Join-Path $WEB_DIR "dist\index.html"
+$DIST_INDEX = Join-Path $DIST_DIR "index.html"
 if (Test-Path $DIST_INDEX) {
     $script:StaticFiles['index.html'] = @{ data = [System.IO.File]::ReadAllBytes($DIST_INDEX); type = 'text/html; charset=utf-8' }
     $cssSrc = Join-Path $WEB_DIR "dashboard.css"
@@ -81,16 +81,17 @@ $script:LastFastRateCheck = [DateTime]::MinValue
 function Get-FastMetrics {
     try {
         $counters = Get-Counter '\Memory\Available MBytes','\Memory\Committed Bytes','\Memory\Commit Limit','\Processor(_Total)\% Processor Time','\PhysicalDisk(_Total)\% Disk Time' -ErrorAction SilentlyContinue
-        $s = @{}
-        if ($counters) { foreach ($sm in $counters.CounterSamples) { $idx = $sm.Path.IndexOf("\", 2); $clean = $sm.Path.Substring($idx).ToUpperInvariant(); $s[$clean] = $sm.CookedValue } }
+        $samples = if ($counters) { @($counters.CounterSamples) } else { @() }
         $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
         $totalMB = if ($os) { [math]::Round($os.TotalVisibleMemorySize / 1024, 0) } else { 0 }
-        $availMB = if ($s['\MEMORY\AVAILABLE MBYTES']) { [math]::Round($s['\MEMORY\AVAILABLE MBYTES'], 0) } else { 0 }
+        $availMB = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\memory\available mbytes'), 0)
         $usedMB = $totalMB - $availMB
         $ramPct = if ($totalMB -gt 0) { [math]::Round(($usedMB / $totalMB) * 100, 1) } else { 0 }
         $commitPct = 0
-        if ($s['\MEMORY\COMMITTED BYTES'] -and $s['\MEMORY\COMMIT LIMIT']) {
-            $commitPct = [math]::Round(($s['\MEMORY\COMMITTED BYTES'] / $s['\MEMORY\COMMIT LIMIT']) * 100, 1)
+        $commitBytes = Get-CounterSampleValue -Samples $samples -Pattern '\memory\committed bytes'
+        $commitLimit = Get-CounterSampleValue -Samples $samples -Pattern '\memory\commit limit'
+        if ($commitBytes -and $commitLimit) {
+            $commitPct = [math]::Round(($commitBytes / $commitLimit) * 100, 1)
         }
         return @{
             ts = (Get-Date -Format 'HH:mm:ss')
@@ -99,8 +100,8 @@ function Get-FastMetrics {
             ram_avail_mb = $availMB
             ram_total_gb = [math]::Round($totalMB / 1024, 1)
             commit_pct = $commitPct
-            cpu_pct = if ($s['\PROCESSOR(_TOTAL)\% PROCESSOR TIME']) { [math]::Round($s['\PROCESSOR(_TOTAL)\% PROCESSOR TIME'], 1) } else { 0 }
-            disk_pct = if ($s['\PHYSICALDISK(_TOTAL)\% DISK TIME']) { [math]::Round($s['\PHYSICALDISK(_TOTAL)\% DISK TIME'], 1) } else { 0 }
+            cpu_pct = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\processor(_total)\% processor time'), 1)
+            disk_pct = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\physicaldisk(_total)\% disk time'), 1)
             _fast = $true
         }
     } catch { return $null }
@@ -205,10 +206,8 @@ if ($Tray) {
     Write-Host "  System tray icon enabled." -ForegroundColor Green
 }
 
-Get-CachedStaticData
-
-$script:refreshRateFile = Join-Path $env:TEMP "pcmon_refresh_rate.txt"
-$profilePathsFile = Join-Path $env:TEMP "pcmon_profile_paths.json"
+$script:refreshRateFile = Join-Path $env:TEMP "pcmon_refresh_rate_$Port.txt"
+$profilePathsFile = Join-Path $env:TEMP "pcmon_profile_paths_$Port.json"
 "500" | Out-File -FilePath $script:refreshRateFile -Encoding UTF8 -Force
 $profilePathsJson = @(
     $PROFILE.AllUsersAllHosts,
@@ -802,4 +801,3 @@ Register-EngineEvent -SourceIdentifier ([System.Management.Automation.PsEngineEv
     Write-Host "[pcmon] Stopped." -ForegroundColor Yellow
 } | Out-Null
 #endregion
-

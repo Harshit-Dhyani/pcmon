@@ -30,6 +30,7 @@ function renderGPUAdapters(container, gpu) {
     div.innerHTML =
       '<div class="gpu-name">' + esc(a.name || 'Unknown') + '</div>' +
       '<div class="gpu-stat">Status: <span style="color:var(--ok)">' + esc(a.status || 'OK') + '</span></div>' +
+      '<div class="gpu-stat">Telemetry: ' + esc(a.telemetry_supported ? 'Supported' : 'Unavailable') + '</div>' +
       '<div class="gpu-stat">Dedicated: ' + fmtMem((a.dedicated_gb || 0) * 1024) + '</div>' +
       '<div class="gpu-stat">Total: ' + fmtMem((a.total_gb || 0) * 1024) + '</div>' +
       '<div class="gpu-bar"><div class="gpu-fill" style="width:' + pct + '%"></div></div>';
@@ -42,6 +43,25 @@ function ioHtml(io) {
   return '<div class="io-card"><span class="io-lbl">' + esc(io.label) + '</span><span class="io-val">' + io.val + '</span></div>';
 }
 
+function issueSeverity(text) {
+  const t = (text || '').toLowerCase();
+  if (t.includes('critical') || t.includes('bottleneck') || t.includes('stale')) return 'bad';
+  if (t.includes('high') || t.includes('pressure') || t.includes('paging') || t.includes('unsupported') || t.includes('unavailable')) return 'warn';
+  return 'ok';
+}
+
+function summarizePrimaryIssue(data) {
+  const issues = data && Array.isArray(data.insights) ? data.insights : [];
+  const first = issues[0] || 'System healthy.';
+  if (/critical|less than 1gb|heavy paging|bottleneck/i.test(first)) {
+    return { title: first, desc: 'This is the highest-signal issue in the current sample and likely the first thing to investigate.' };
+  }
+  if (/unsupported|unavailable/i.test(first)) {
+    return { title: first, desc: 'This capability is not currently available, and pcmon is reporting that honestly.' };
+  }
+  return { title: first, desc: 'pcmon is ranking the most important issue from the current live sample here.' };
+}
+
 /* ── Table ────────────────────────────────────────────────────────── */
 function renderTable(tbl, rows, cols, opts = {}) {
   if (!tbl) return;
@@ -52,6 +72,15 @@ function renderTable(tbl, rows, cols, opts = {}) {
   if (opts.actions) { const th = document.createElement('th'); th.textContent = 'Actions'; hdr.appendChild(th); }
   const tbody = tbl.createTBody();
   const maxRows = opts.maxRows || 30;
+  if (!rows || rows.length === 0) {
+    const tr = tbody.insertRow();
+    const td = tr.insertCell();
+    td.colSpan = cols.length + (opts.actions ? 1 : 0);
+    td.textContent = opts.emptyText || 'No data available.';
+    td.className = 'note';
+    td.style.padding = '14px';
+    return;
+  }
   rows.slice(0, maxRows).forEach((r, rowIdx) => {
     const tr = tbody.insertRow();
     cols.forEach((_, i) => { const td = tr.insertCell(); td.textContent = r[i] !== undefined ? r[i] : ''; });
@@ -169,6 +198,13 @@ function renderAll(d) {
   FILL(EL('c-sf-fill-cpu'), d.cpu_pct || 0);
   TXT(EL('c-sv-pg'), fmtNum(d.pages_sec || 0) + '/s');
   TXT(EL('c-queue'), fmtNum(d.disk_queue || 0));
+  const cpu = d.cpu || {};
+  TXT(EL('cpu-name'), cpu.name || 'Unknown CPU');
+  TXT(EL('cpu-topology'), ((cpu.sockets || 0) || '—') + ' / ' + ((cpu.cores || 0) || '—') + ' / ' + ((cpu.logical || 0) || '—'));
+  TXT(EL('cpu-clocks'), (cpu.base_mhz ? fmtNum(cpu.base_mhz) + ' MHz' : '—') + ' / ' + (cpu.current_mhz ? fmtNum(cpu.current_mhz) + ' MHz' : '—') + (cpu.performance_pct ? ' (' + fmtNum(cpu.performance_pct) + '% perf)' : ''));
+  TXT(EL('cpu-max-clock'), cpu.max_seen_mhz ? fmtNum(cpu.max_seen_mhz) + ' MHz' : '—');
+  TXT(EL('cpu-temp'), cpu.temp_supported && cpu.temp_c != null ? fmtNum(cpu.temp_c) + ' C' : 'Unavailable');
+  TXT(EL('cpu-power'), cpu.power_supported && cpu.power_w != null ? fmtNum(cpu.power_w) + ' W' : 'Unavailable');
   hideSkeleton('c-tbl-sk', 'c-tbl');
 
   /* Disks */
@@ -199,14 +235,20 @@ function renderAll(d) {
   /* GPU */
   const gpu = d.gpu || {};
   TXT(EL('g-avail'), gpu.available ? 'Yes' : 'No');
+  TXT(EL('g-status'), gpu.status_text || (gpu.available ? 'Collector active' : 'Unsupported / unavailable on this device'));
   const gpuSection = EL('pg-gpu');
   if (gpuSection) {
-    if (gpu && gpu.available) {
+    if (gpu && gpu.available && gpu.engines_supported) {
       const eng = gpu.eng_type_totals || {};
       TXT(EL('g-3d'), eng['3d'] !== undefined ? fmtNum(eng['3d']) + '%' : 'N/A');
       TXT(EL('g-vdec'), eng['videodecode'] !== undefined ? fmtNum(eng['videodecode']) + '%' : 'N/A');
       TXT(EL('g-venc'), eng['videoencode'] !== undefined ? fmtNum(eng['videoencode']) + '%' : 'N/A');
       TXT(EL('g-copy'), eng['copy'] !== undefined ? fmtNum(eng['copy']) + '%' : 'N/A');
+    } else {
+      TXT(EL('g-3d'), 'N/A');
+      TXT(EL('g-vdec'), 'N/A');
+      TXT(EL('g-venc'), 'N/A');
+      TXT(EL('g-copy'), 'N/A');
     }
   }
   renderGPUAdapters(EL('gpu-adapters'), gpu);
@@ -239,12 +281,15 @@ function renderAll(d) {
   /* System */
   const sysSummary = EL('sys-summary');
   if (sysSummary) {
+    const network = d.network || {};
     sysSummary.innerHTML = [
       ['Hostname', esc(d.hostname) || '—'],
       ['OS', esc(d.os_caption) || '—'],
       ['Total Processes', d.total_procs || 0],
       ['RAM Total', fmtMem(d.ram_total_gb * 1024)],
-      ['Commit Limit', fmtMem(d.limit_gb * 1024)]
+      ['Commit Limit', fmtMem(d.limit_gb * 1024)],
+      ['Network', esc(network.status_text || 'Unknown')],
+      ['Primary Adapter', esc(network.busiest_adapter || '—')]
     ].map(([k, v]) => '<div class="sys-row"><span>' + k + '</span><span>' + v + '</span></div>').join('');
     hideSkeleton('sys-summary-sk', 'sys-summary');
   }
@@ -268,23 +313,27 @@ function renderAll(d) {
     hideSkeleton('sus-tbl-sk', 'sus-tbl');
 
     const svcData = (d.heavy_services || []).slice(0, 25);
-    renderTable(EL('svc-tbl'), svcData.map(s => [s.display_name || s.name || '?', s.name || '?', s.state || '?', s.start_mode || '?', s.pid || 0, fmtMem((d.top_ram || []).find(p => p.pid == s.pid)?.ws_mb || 0)]), ['Display Name', 'Name', 'State', 'Start', 'PID', 'WS'], {});
+    renderTable(EL('svc-tbl'), svcData.map(s => [s.display_name || s.name || '?', s.name || '?', s.state || '?', s.start_mode || '?', s.pid || 0, fmtMem((d.top_ram || []).find(p => p.pid == s.pid)?.ws_mb || 0)]), ['Display Name', 'Name', 'State', 'Start', 'PID', 'WS'], { emptyText: 'No matching heavy services in the current sample.' });
     hideSkeleton('svc-tbl-sk', 'svc-tbl');
 
     /* System page */
     renderDrives(EL('disk-drives'), d.disks);
 
     const startupData = (d.startup || []).slice(0, 20);
-    renderTable(EL('startup-tbl'), startupData.map(s => [s.name || '?', s.command || '?', s.location || '?']), ['Name', 'Command', 'Location'], {});
+    renderTable(EL('startup-tbl'), startupData.map(s => [s.name || '?', s.command || '?', s.location || '?']), ['Name', 'Command', 'Location'], { emptyText: 'No startup items were returned by Windows.' });
     hideSkeleton('startup-tbl-sk', 'startup-tbl');
 
     const pfData = (d.pagefile || []).slice(0, 5);
-    renderTable(EL('pagefile-tbl'), pfData.map(p => [p.name || '?', fmtMem(p.allocated_mb), fmtMem(p.current_usage_mb), fmtMem(p.peak_usage_mb)]), ['Name', 'Allocated MB', 'Current MB', 'Peak MB'], {});
+    renderTable(EL('pagefile-tbl'), pfData.map(p => [p.name || '?', fmtMem(p.allocated_mb), fmtMem(p.current_usage_mb), fmtMem(p.peak_usage_mb)]), ['Name', 'Allocated MB', 'Current MB', 'Peak MB'], { emptyText: 'No page file data was returned.' });
     hideSkeleton('pagefile-tbl-sk', 'pagefile-tbl');
 
     const profiles = (d.ps_profiles || []);
-    renderTable(EL('profiles-tbl'), profiles.map(p => [p.path || '?', p.size_kb ? fmtMem(p.size_kb) : '?']), ['Profile Path', 'Size'], {});
+    renderTable(EL('profiles-tbl'), profiles.map(p => [p.path || '?', p.size_kb ? fmtMem(p.size_kb) : (p.exists ? '0 KB' : 'Missing')]), ['Profile Path', 'Size'], { emptyText: 'No PowerShell profile paths were discovered.' });
     hideSkeleton('profiles-tbl-sk', 'profiles-tbl');
+
+    const networkAdapters = ((d.network && d.network.adapters) || []).slice(0, 12);
+    renderTable(EL('net-tbl'), networkAdapters.map(n => [n.name || '?', n.kind || '?', n.status || '?', n.link_speed || '—', n.media_type || '—']), ['Name', 'Type', 'Status', 'Link', 'Media'], { emptyText: 'No physical network adapters were detected.' });
+    hideSkeleton('net-tbl-sk', 'net-tbl');
 
     /* All Processes */
     const allProcs = (d.all_processes || []).slice(0, 100);
@@ -294,9 +343,12 @@ function renderAll(d) {
     /* Insights */
     const insEl = EL('insights-list');
     if (insEl) {
-      insEl.innerHTML = (d.insights || []).map(t => '<div class="insight">' + esc(t) + '</div>').join('');
+      insEl.innerHTML = (d.insights || []).map(t => '<div class="insight ' + issueSeverity(t) + '">' + esc(t) + '</div>').join('');
       if (!d.insights || d.insights.length === 0) insEl.innerHTML = '<div class="note" style="padding:6px 0">No insights yet.</div>';
     }
+    const primaryIssue = summarizePrimaryIssue(d);
+    TXT(EL('issue-primary-title'), primaryIssue.title);
+    TXT(EL('issue-primary-desc'), primaryIssue.desc);
   }
 
   /* Error banner */
@@ -464,6 +516,8 @@ function initRefreshSelector() {
 
   const updateRefresh = (rate) => {
     PCM.refreshInterval = rate;
+    if (sel) sel.value = String(rate);
+    if (settingsSel) settingsSel.value = String(rate);
     try {
       fetch('/api/refresh-rate', {
         method: 'POST',
@@ -471,6 +525,12 @@ function initRefreshSelector() {
         body: JSON.stringify({ refreshRate: rate })
       }).catch(() => {});
     } catch (e) {}
+    if (PCM.connectionMethod === 'http') {
+      clearTimeout(PCM.pollTimer);
+      PCM.pollTimer = null;
+      PCM.pollInFlight = false;
+      fetchData();
+    }
     updateSettingsConnInfo();
   };
 

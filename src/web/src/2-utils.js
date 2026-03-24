@@ -97,7 +97,7 @@ function showAllSkeletons() {
     ['ov-tbl-sk', 'ov-tbl'], ['r-tbl-sk', 'r-tbl'], ['c-tbl-sk', 'c-tbl'],
     ['sus-tbl-sk', 'sus-tbl'], ['svc-tbl-sk', 'svc-tbl'],
     ['startup-tbl-sk', 'startup-tbl'], ['pagefile-tbl-sk', 'pagefile-tbl'],
-    ['profiles-tbl-sk', 'profiles-tbl'], ['all-tbl-sk', 'all-tbl'],
+    ['profiles-tbl-sk', 'profiles-tbl'], ['net-tbl-sk', 'net-tbl'], ['all-tbl-sk', 'all-tbl'],
     ['ov-disks-sk', 'ov-disks'], ['disk-drives-sk', 'disk-drives'],
     ['disk-io-sk', 'disk-io-strip'], ['ov-io-sk', 'ov-io'],
     ['gpu-adapters-sk', 'gpu-adapters'], ['group-insights-sk', 'group-insights'],

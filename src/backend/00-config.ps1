@@ -5,7 +5,9 @@ param(
     [switch]$Wallpaper,
     [switch]$Tray,
     [switch]$Debug,
-    [switch]$Help
+    [switch]$Help,
+    [ValidateRange(1, 65535)]
+    [int]$Port = 9876
 )
 
 if ($Help) {
@@ -44,7 +46,6 @@ if ($Wallpaper -and -not $Tray) {
 $ErrorActionPreference = "Continue"
 $script:ErrorCount = 0
 $HOSTNAME = "localhost"
-$Port = 9876
 $OPEN_BROWSER = -not ($NoOpen -or $ApiOnly)
 for ($i = 0; $i -lt 20; $i++) {
     $test = New-Object System.Net.HttpListener
@@ -53,7 +54,8 @@ for ($i = 0; $i -lt 20; $i++) {
 }
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WEB_DIR = Join-Path $SCRIPT_DIR "web"
-$LOG_FILE = Join-Path $env:TEMP "pcmon_errors.log"
+$DIST_DIR = Join-Path $SCRIPT_DIR "dist"
+$LOG_FILE = Join-Path $env:TEMP "pcmon_errors_$Port.log"
 
 $script:StartTime = Get-Date
 $script:CachedStatic = $null
@@ -70,9 +72,12 @@ $script:ConnectionMethod = "polling"
 $script:WSClients = [System.Collections.Generic.List[object]]::new()
 $script:WSLastSend = [DateTime]::MinValue
 $script:WSBroadcastInterval = 500
+$script:SessionMaxCpuMhz = 0
+$script:SessionMaxCpuTempC = $null
+$script:SessionMaxCpuPowerW = $null
 $SNAPSHOTS_DIR = Join-Path $SCRIPT_DIR "snapshots"
 if (-not (Test-Path $SNAPSHOTS_DIR)) { New-Item -ItemType Directory -Path $SNAPSHOTS_DIR -Force | Out-Null }
-$cacheFile = Join-Path $env:TEMP "pcmon_live_cache.json"
+$cacheFile = Join-Path $env:TEMP "pcmon_live_cache_$Port.json"
 
 $PROTECTED_PROCESSES = @('System', 'Idle', 'csrss', 'smss', 'wininit', 'services', 'lsass', 'svchost', 'winlogon', 'dwm', 'explorer', 'taskhostw', 'sihost', 'ctfmon', 'fontdrvhost', 'Memory Compression')
 
