@@ -60,7 +60,7 @@ async function loadBootstrap() {
     PCM.firstLoad = false;
     renderAll(data);
     updateDebugPanel(data);
-  } catch (e) { console.log('Bootstrap error:', e); }
+  } catch (e) { /* keep bootstrap failures silent; the UI will retry on the next tick */ }
 }
 
 /* ── Process Actions ──────────────────────────────────────────────── */
@@ -109,7 +109,7 @@ async function fetchConfig() {
     const res = await fetch('/api/config', { cache: 'no-store' });
     const data = await res.json();
     PCM.thresholds = { ...PCM.DEFAULT_THRESHOLDS, ...(data.thresholds || {}) };
-  } catch (e) { console.log('Fetch config error:', e); }
+  } catch (e) { /* config fetch is best-effort during startup */ }
 }
 
 async function saveConfig(cfg) {
@@ -150,7 +150,7 @@ async function deleteSnapshot(id) {
   try {
     await fetch('/api/snapshots/' + id + '/delete', { method: 'POST', headers: authHeaders() });
     renderSnapshots();
-  } catch (e) { console.log('Delete snapshot error:', e); }
+  } catch (e) { /* snapshot deletion failures are handled by the UI action state */ }
 }
 
 async function exportSnapshot(id, format) {
@@ -194,7 +194,7 @@ async function fetchErrors() {
     const data = await res.json();
     PCM.errors = data.errors || [];
     updateDebugPanel(PCM.cachedData);
-  } catch (e) { console.log('Fetch errors error:', e); }
+  } catch (e) { /* error polling stays best-effort */ }
 }
 
 /* ── Clipboard ───────────────────────────────────────────────────── */
@@ -228,5 +228,5 @@ async function exportAllData() {
     a.click();
     URL.revokeObjectURL(url);
     return true;
-  } catch (e) { console.log('Export error:', e); return false; }
+  } catch (e) { return false; }
 }

@@ -527,8 +527,8 @@ function initRefreshSelector() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshRate: rate })
-      }).catch(e => console.log('Refresh rate save error:', e));
-    } catch (e) { console.log('Refresh rate save error:', e); }
+      }).catch(e => { /* refresh-rate save is advisory; next poll will reconcile */ });
+    } catch (e) { /* refresh-rate save is advisory; next poll will reconcile */ }
     if (PCM.connectionMethod === 'http') {
       clearTimeout(PCM.pollTimer);
       PCM.pollTimer = null;
