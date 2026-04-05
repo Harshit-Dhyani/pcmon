@@ -13,7 +13,7 @@ function renderDrives(container, disks) {
       '<div class="drive-head"><span class="drive-letter">' + esc(d.drive || '?') + '</span><span class="drive-pct ' + cls + '">' + fmtNum(pct) + '%</span></div>' +
       '<div class="drive-label">' + esc(d.label || '') + '</div>' +
       '<div class="drive-bar"><div class="drive-fill ' + cls + '" style="width:' + pct + '%"></div></div>' +
-      '<div class="drive-meta">' + fmtMem(d.free_gb * 1024) + ' free&nbsp;/&nbsp;' + fmtMem(d.total_gb * 1024) + ' total</div>';
+      '<div class="drive-meta">' + fmtMem((d.free_gb || 0) * 1024) + ' free&nbsp;/&nbsp;' + fmtMem((d.total_gb || 0) * 1024) + ' total</div>';
     container.appendChild(div);
   });
 }
@@ -178,11 +178,11 @@ function renderAll(d) {
 
   /* RAM page */
   TXT(EL('r-sv-ram'), fmtNum(d.ram_pct) + '%');
-  TXT(EL('r-avail'), fmtMem(d.ram_avail_mb) + ' / ' + fmtMem(d.ram_total_gb * 1024));
+  TXT(EL('r-avail'), fmtMem(d.ram_avail_mb) + ' / ' + fmtMem((d.ram_total_gb || 0) * 1024));
   COL(EL('r-sf-ram'), d.ram_pct || 0);
   FILL(EL('r-sf-fill-ram'), d.ram_pct || 0);
   TXT(EL('r-sv-cm'), fmtNum(d.commit_pct) + '%');
-  TXT(EL('r-ss-cm'), fmtMem(d.commit_gb * 1024) + ' / ' + fmtMem(d.limit_gb * 1024));
+  TXT(EL('r-ss-cm'), fmtMem((d.commit_gb || 0) * 1024) + ' / ' + fmtMem((d.limit_gb || 0) * 1024));
   COL(EL('r-sf-cm'), d.commit_pct || 0);
   FILL(EL('r-sf-fill-cm'), d.commit_pct || 0);
   TXT(EL('r-sv-pg'), fmtNum(d.pages_sec || 0) + '/s');
@@ -205,8 +205,8 @@ function renderAll(d) {
   TXT(EL('cpu-topology'), ((cpu.sockets || 0) || '—') + ' / ' + ((cpu.cores || 0) || '—') + ' / ' + ((cpu.logical || 0) || '—'));
   TXT(EL('cpu-clocks'), (cpu.base_mhz ? fmtNum(cpu.base_mhz) + ' MHz' : '—') + ' / ' + (cpu.current_mhz ? fmtNum(cpu.current_mhz) + ' MHz' : '—') + (cpu.performance_pct ? ' (' + fmtNum(cpu.performance_pct) + '% perf)' : ''));
   TXT(EL('cpu-max-clock'), cpu.max_seen_mhz ? fmtNum(cpu.max_seen_mhz) + ' MHz' : '—');
-  TXT(EL('cpu-temp'), cpu.temp_supported && cpu.temp_c != null ? fmtNum(cpu.temp_c) + ' C' : 'Unavailable');
-  TXT(EL('cpu-power'), cpu.power_supported && cpu.power_w != null ? fmtNum(cpu.power_w) + ' W' : 'Unavailable');
+  TXT(EL('cpu-temp'), cpu.temp_supported && cpu.temp_c != null ? fmtNum(cpu.temp_c) + ' C' : '—');
+  TXT(EL('cpu-power'), cpu.power_supported && cpu.power_w != null ? fmtNum(cpu.power_w) + ' W' : '—');
   hideSkeleton('c-tbl-sk', 'c-tbl');
 
   /* Disks */
@@ -288,8 +288,8 @@ function renderAll(d) {
       ['Hostname', esc(d.hostname) || '—'],
       ['OS', esc(d.os_caption) || '—'],
       ['Total Processes', d.total_procs || 0],
-      ['RAM Total', fmtMem(d.ram_total_gb * 1024)],
-      ['Commit Limit', fmtMem(d.limit_gb * 1024)],
+      ['RAM Total', fmtMem((d.ram_total_gb || 0) * 1024)],
+      ['Commit Limit', fmtMem((d.limit_gb || 0) * 1024)],
       ['Network', esc(network.status_text || 'Unknown')],
       ['Primary Adapter', esc(network.busiest_adapter || '—')]
     ].map(([k, v]) => '<div class="sys-row"><span>' + k + '</span><span>' + v + '</span></div>').join('');
@@ -465,7 +465,7 @@ function updateDebugPanel(data) {
   }
   if (dbgPsErrs) {
     const psErrBanner = EL('ps-errors');
-    if (psErrBanner && psErrBanner.textContent) dbgPsErrs.innerHTML = psErrBanner.textContent;
+    if (psErrBanner && psErrBanner.textContent) dbgPsErrs.innerHTML = esc(psErrBanner.textContent);
   }
 }
 
@@ -527,8 +527,8 @@ function initRefreshSelector() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshRate: rate })
-      }).catch(() => {});
-    } catch (e) {}
+      }).catch(e => console.log('Refresh rate save error:', e));
+    } catch (e) { console.log('Refresh rate save error:', e); }
     if (PCM.connectionMethod === 'http') {
       clearTimeout(PCM.pollTimer);
       PCM.pollTimer = null;
@@ -617,17 +617,23 @@ const THRESHOLD_DEFS = [
   { key: 'ram_pct', label: 'RAM Usage %', min: 0, max: 100 },
   { key: 'cpu_pct', label: 'CPU Usage %', min: 0, max: 100 },
   { key: 'commit_pct', label: 'Commit Charge %', min: 0, max: 100 },
-  { key: 'pages_sec', label: 'Pages/sec', min: 0, max: 10000 },
+  { key: 'pages_sec', label: 'Pages/sec', min: 0, max: 50000 },
   { key: 'non_paged_mb', label: 'Non-Paged Pool MB', min: 0, max: 10000 },
-  { key: 'disk_pct', label: 'Disk Usage %', min: 0, max: 100 }
+  { key: 'disk_pct', label: 'Disk Usage %', min: 0, max: 100 },
+  { key: 'gpu_pct', label: 'GPU Usage %', min: 0, max: 100 },
+  { key: 'net_sent_kb', label: 'Network Sent KB/s', min: 0, max: 100000 },
+  { key: 'net_recv_kb', label: 'Network Recv KB/s', min: 0, max: 100000 }
 ];
 
 function renderThresholds() {
   const container = EL('thresholds-form');
+  const skeleton = EL('thresholds-form-sk');
   if (!container) return;
   container.innerHTML = THRESHOLD_DEFS.map(t =>
     '<div class="threshold-row"><label>' + esc(t.label) + '</label><input type="number" data-key="' + t.key + '" value="' + (PCM.thresholds[t.key] || 0) + '" min="' + t.min + '" max="' + t.max + '"></div>'
   ).join('');
+  if (skeleton) skeleton.style.display = 'none';
+  if (container) container.style.display = 'block';
 }
 
 async function saveThresholdsFromForm() {
@@ -648,6 +654,24 @@ async function saveThresholdsFromForm() {
 }
 
 function initThresholds() { renderThresholds(); const saveBtn = EL('btn-save-thresholds'); if (saveBtn) saveBtn.addEventListener('click', saveThresholdsFromForm); }
+
+/* ── Export ───────────────────────────────────────────────────────── */
+function initExportButton() {
+  const exportBtn = EL('btn-export-data');
+  const exportMsg = EL('export-msg');
+  if (exportBtn) exportBtn.addEventListener('click', async () => {
+    exportBtn.disabled = true;
+    exportBtn.textContent = 'Exporting...';
+    const ok = await exportAllData();
+    if (exportMsg) {
+      exportMsg.textContent = ok ? 'Exported!' : 'Error';
+      exportMsg.style.color = ok ? 'var(--ok)' : 'var(--bad)';
+      setTimeout(() => { if (exportMsg) exportMsg.textContent = ''; }, 2000);
+    }
+    exportBtn.disabled = false;
+    exportBtn.textContent = 'Export All Data (JSON)';
+  });
+}
 
 /* ── Report ──────────────────────────────────────────────────────── */
 function initReportButtons() {
@@ -710,6 +734,7 @@ async function start() {
   initSnapshots();
   initThresholds();
   initReportButtons();
+  initExportButton();
   initStream();
 }
 

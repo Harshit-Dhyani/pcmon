@@ -287,8 +287,8 @@
         <div class="sys-row"><span>Sockets / Cores / Logical</span><span id="cpu-topology">—</span></div>
         <div class="sys-row"><span>Base / Current Clock</span><span id="cpu-clocks">—</span></div>
         <div class="sys-row"><span>Session Max Clock</span><span id="cpu-max-clock">—</span></div>
-        <div class="sys-row"><span>Temperature</span><span id="cpu-temp">Unavailable</span></div>
-        <div class="sys-row"><span>Package Power</span><span id="cpu-power">Unavailable</span></div>
+        <div class="sys-row"><span>Temperature</span><span id="cpu-temp">—</span></div>
+        <div class="sys-row"><span>Package Power</span><span id="cpu-power">—</span></div>
       </div>
     </div>
 
@@ -675,6 +675,15 @@
       </div>
       <button type="button" id="btn-save-thresholds" class="btn-primary" style="margin-top:10px">Save Thresholds</button>
       <span id="thresholds-msg" style="margin-left:10px"></span>
+    </div>
+
+    <div class="pnl" style="margin-top:16px">
+      <div class="pnl-head"><span class="pnl-title">Data Export</span></div>
+      <div class="pnl-body">
+        <p style="margin:0 0 10px 0;color:var(--dim)">Export all system data for AI analysis or backup.</p>
+        <button type="button" id="btn-export-data" class="btn-secondary">Export All Data (JSON)</button>
+        <span id="export-msg" style="margin-left:10px"></span>
+      </div>
     </div>
   </div>
 

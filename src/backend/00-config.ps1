@@ -47,6 +47,7 @@ $ErrorActionPreference = "Continue"
 $script:ErrorCount = 0
 $HOSTNAME = "localhost"
 $OPEN_BROWSER = -not ($NoOpen -or $ApiOnly)
+if ($Port -gt 65535) { $Port = 65535 }
 # Auto-bump the listener port when the requested one is already occupied.
 for ($i = 0; $i -lt 20; $i++) {
     $test = New-Object System.Net.HttpListener
@@ -88,11 +89,14 @@ $PROTECTED_PROCESSES = @('System', 'Idle', 'csrss', 'smss', 'wininit', 'services
 
 $script:AlertThresholds = @{
     ram_pct = 85
+    cpu_pct = 90
     commit_pct = 80
     pages_sec = 1000
     non_paged_mb = 1500
     disk_pct = 90
-    cpu_pct = 90
+    gpu_pct = 90
+    net_sent_kb = 50000
+    net_recv_kb = 50000
 }
 
 $configPath = Join-Path $SCRIPT_DIR "config.json"

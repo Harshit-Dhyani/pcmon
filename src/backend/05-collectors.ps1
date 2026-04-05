@@ -17,7 +17,24 @@ function Get-CachedStaticData {
         Video = @(Get-CimInstance Win32_VideoController -Property Name, AdapterRAM, Status -ErrorAction SilentlyContinue)
         CPU = @(Get-CimInstance Win32_Processor -Property Name, NumberOfCores, NumberOfLogicalProcessors, MaxClockSpeed, CurrentClockSpeed, SocketDesignation, Status -ErrorAction SilentlyContinue)
         NetAdapters = @(try { Get-NetAdapter -Physical -ErrorAction Stop | Select-Object Name, InterfaceDescription, Status, LinkSpeed, MediaType, PhysicalMediaType, MacAddress } catch { @() })
+        PageFile = @()
+        PSProfiles = @()
     }
+    try {
+        foreach ($pf in @(Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue)) {
+            $script:CachedStatic.PageFile += [PSCustomObject]@{ name = $pf.Name; allocated_mb = $pf.AllocatedBaseSize; current_usage_mb = $pf.CurrentUsage; peak_usage_mb = $pf.PeakUsage }
+        }
+    } catch {}
+    try {
+        $profilePaths = @($PROFILE.AllUsersAllHosts, $PROFILE.AllUsersCurrentHost, $PROFILE.CurrentUserAllHosts, $PROFILE.CurrentUserCurrentHost)
+        foreach ($pp in $profilePaths) {
+            if ($pp) {
+                $exists = Test-Path $pp -ErrorAction SilentlyContinue
+                $sizeKb = if ($exists) { try { [math]::Round((Get-Item $pp).Length / 1KB, 1) } catch { $null } } else { $null }
+                $script:CachedStatic.PSProfiles += [PSCustomObject]@{ path = $pp; exists = $exists; size_kb = $sizeKb }
+            }
+        }
+    } catch {}
     $script:StaticCacheExpiry = $now.AddSeconds(60)
 }
 
@@ -25,6 +42,7 @@ function Get-CachedCommandLines {
     $now = Get-Date
     if ($script:ProcessCacheTime -gt $now.AddSeconds(-5)) { return }
     $script:ProcessCacheTime = $now
+    $script:CommandLines = @{}
     $cmds = Get-CimInstance Win32_Process -Property ProcessId, CommandLine, ExecutablePath -ErrorAction SilentlyContinue
     foreach ($c in $cmds) {
         $script:CommandLines[$c.ProcessId] = @{ cmd = $c.CommandLine; exe_path = $c.ExecutablePath }
@@ -296,13 +314,10 @@ function _CollectLiveData {
     }
 
     $pagefile = @()
-    try { foreach ($pf in @(Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue)) { $pagefile += [PSCustomObject]@{ name = $pf.Name; allocated_mb = $pf.AllocatedBaseSize; current_usage_mb = $pf.CurrentUsage; peak_usage_mb = $pf.PeakUsage } } } catch {}
-
+    if ($cs.PageFile) { $pagefile = $cs.PageFile }
+    
     $psProfiles = @()
-    try {
-        $profilePaths = @($PROFILE.AllUsersAllHosts, $PROFILE.AllUsersCurrentHost, $PROFILE.CurrentUserAllHosts, $PROFILE.CurrentUserCurrentHost)
-        foreach ($pp in $profilePaths) { if ($pp) { $exists = Test-Path $pp -ErrorAction SilentlyContinue; $sizeKb = if ($exists) { try { [math]::Round((Get-Item $pp).Length / 1KB, 1) } catch { $null } } else { $null }; $psProfiles += [PSCustomObject]@{ path = $pp; exists = $exists; size_kb = $sizeKb } } }
-    } catch {}
+    if ($cs.PSProfiles) { $psProfiles = $cs.PSProfiles }
 
     $svcByPid = @{}
     $services = if ($cs.Services) { $cs.Services } else { @() }
@@ -316,6 +331,28 @@ function _CollectLiveData {
 
     $startupItems = if ($cs.Startup) { $cs.Startup } else { @() }
     $osCaption = if ($os) { $os.Caption } else { 'Unknown' }
+
+    $script:cpuTempC = $null
+    $script:cpuTempSupported = $false
+    try {
+        $thermal = Get-CimInstance -ClassName Win32_PerfFormattedData_Counters_ThermalZoneInformation -ErrorAction SilentlyContinue | Where-Object { $_.Name -like '*TZ*' } | Select-Object -First 1
+        if ($null -ne $thermal -and $thermal.Temperature -gt 0) {
+            $script:cpuTempC = [math]::Round($thermal.Temperature / 10.0, 1)
+            $script:cpuTempSupported = $true
+            if ($null -eq $script:SessionMaxCpuTempC -or $script:cpuTempC -gt $script:SessionMaxCpuTempC) { $script:SessionMaxCpuTempC = $script:cpuTempC }
+        }
+        } catch {}
+
+    $script:cpuTempC = $null
+    $script:cpuTempSupported = $false
+    try {
+        $thermal = Get-CimInstance -ClassName Win32_PerfFormattedData_Counters_ThermalZoneInformation -ErrorAction SilentlyContinue | Where-Object { $_.Name -like '*TZ*' } | Select-Object -First 1
+        if ($null -ne $thermal -and $thermal.Temperature -gt 0) {
+            $script:cpuTempC = [math]::Round($thermal.Temperature / 10.0, 1)
+            $script:cpuTempSupported = $true
+            if ($null -eq $script:SessionMaxCpuTempC -or $script:cpuTempC -gt $script:SessionMaxCpuTempC) { $script:SessionMaxCpuTempC = $script:cpuTempC }
+        }
+    } catch {}
 
     return @{
         ts = (Get-Date -Format 'HH:mm:ss'); hostname = $env:COMPUTERNAME; os_caption = $osCaption; total_procs = $processes.Count; ram_pct = $ramPct
@@ -339,9 +376,9 @@ function _CollectLiveData {
             current_mhz = $cpuCurrentMhz
             max_seen_mhz = $script:SessionMaxCpuMhz
             performance_pct = $cpuPerfPct
-            temp_c = $null
+            temp_c = $script:cpuTempC
             max_temp_c = $script:SessionMaxCpuTempC
-            temp_supported = $false
+            temp_supported = $script:cpuTempSupported
             power_w = $null
             max_power_w = $script:SessionMaxCpuPowerW
             power_supported = $false

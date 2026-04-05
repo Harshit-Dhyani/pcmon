@@ -3,7 +3,6 @@
 /* ── Auth ─────────────────────────────────────────────────────────── */
 function authHeaders(extra = {}) {
   const h = { 'Content-Type': 'application/json' };
-  if (PCM.csrfToken) h['X-PCMON-Token'] = PCM.csrfToken;
   Object.assign(h, extra);
   return h;
 }
@@ -61,7 +60,7 @@ async function loadBootstrap() {
     PCM.firstLoad = false;
     renderAll(data);
     updateDebugPanel(data);
-  } catch (e) {}
+  } catch (e) { console.log('Bootstrap error:', e); }
 }
 
 /* ── Process Actions ──────────────────────────────────────────────── */
@@ -110,7 +109,7 @@ async function fetchConfig() {
     const res = await fetch('/api/config', { cache: 'no-store' });
     const data = await res.json();
     PCM.thresholds = { ...PCM.DEFAULT_THRESHOLDS, ...(data.thresholds || {}) };
-  } catch (e) {}
+  } catch (e) { console.log('Fetch config error:', e); }
 }
 
 async function saveConfig(cfg) {
@@ -151,7 +150,7 @@ async function deleteSnapshot(id) {
   try {
     await fetch('/api/snapshots/' + id + '/delete', { method: 'POST', headers: authHeaders() });
     renderSnapshots();
-  } catch (e) {}
+  } catch (e) { console.log('Delete snapshot error:', e); }
 }
 
 async function exportSnapshot(id, format) {
@@ -195,7 +194,7 @@ async function fetchErrors() {
     const data = await res.json();
     PCM.errors = data.errors || [];
     updateDebugPanel(PCM.cachedData);
-  } catch (e) {}
+  } catch (e) { console.log('Fetch errors error:', e); }
 }
 
 /* ── Clipboard ───────────────────────────────────────────────────── */
@@ -213,4 +212,21 @@ function copyTableToClipboard(tableId) {
     text += '\n';
   });
   navigator.clipboard.writeText(text).then(() => alert('Copied to clipboard!')).catch(() => alert('Failed to copy'));
+}
+
+/* ── Export ───────────────────────────────────────────────────────── */
+async function exportAllData() {
+  try {
+    const res = await fetch('/api/export', { cache: 'no-store' });
+    const data = await res.json();
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'pcmon_export_' + new Date().toISOString().slice(0,19).replace(/[T:]/g,'-') + '.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    return true;
+  } catch (e) { console.log('Export error:', e); return false; }
 }

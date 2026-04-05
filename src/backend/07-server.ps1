@@ -22,6 +22,7 @@ Write-Host "  $base/data"
 Write-Host "  $base/api/snapshots"
 Write-Host "  $base/api/report"
 Write-Host "  $base/api/report/download"
+Write-Host "  $base/api/export"
 Write-Host "  $base/stream $([char]0x1B)[36m(WebSocket/SSE)$([char]0x1B)[0m"
 Write-Host "  $base/health"
 Write-Host "  $base/errors"
@@ -54,6 +55,10 @@ $wallpaperFile = Join-Path $SCRIPT_DIR "wallpaper\index.html"
 if (Test-Path $wallpaperFile) { $script:StaticFiles['wallpaper.html'] = @{ data = [System.IO.File]::ReadAllBytes($wallpaperFile); type = 'text/html; charset=utf-8' } }
 
 $listener.Start()
+
+$script:refreshRateFile = Join-Path $env:TEMP "pcmon_refresh_rate_$Port.txt"
+$profilePathsFile = Join-Path $env:TEMP "pcmon_profile_paths_$Port.json"
+"500" | Out-File -FilePath $script:refreshRateFile -Encoding UTF8 -Force
 
 $wsBroadcastTimer = New-Object System.Timers.Timer
 $wsBroadcastTimer.Interval = $script:WSBroadcastInterval
@@ -122,6 +127,15 @@ Register-ObjectEvent -InputObject $fastTimer -EventName Elapsed -Action {
 } | Out-Null
 $fastTimer.Start()
 
+$profilePathsFile = Join-Path $env:TEMP "pcmon_profile_paths_$Port.json"
+$profilePathsJson = @(
+    $PROFILE.AllUsersAllHosts,
+    $PROFILE.AllUsersCurrentHost,
+    $PROFILE.CurrentUserAllHosts,
+    $PROFILE.CurrentUserCurrentHost
+) | Where-Object { $_ } | ConvertTo-Json -Compress
+$profilePathsJson | Out-File -FilePath $profilePathsFile -Encoding UTF8 -Force
+
 $rateCheckTimer = New-Object System.Timers.Timer
 $rateCheckTimer.Interval = 2000
 $rateCheckTimer.AutoReset = $true
@@ -143,7 +157,7 @@ $cleanupTimer.Interval = 30000
 $cleanupTimer.AutoReset = $true
 Register-ObjectEvent -InputObject $cleanupTimer -EventName Elapsed -Action {
     $dead = [System.Collections.Generic.List[object]]::new()
-    foreach ($ws in $script:WSClients) {
+    foreach ($ws in @($script:WSClients)) {
         try { if ($ws.State -ne 'Open') { $dead.Add($ws) } } catch { $dead.Add($ws) }
     }
     foreach ($d in $dead) { try { $script:WSClients.Remove($d) } catch {} }
@@ -206,22 +220,18 @@ if ($Tray) {
     Write-Host "  System tray icon enabled." -ForegroundColor Green
 }
 
-$script:refreshRateFile = Join-Path $env:TEMP "pcmon_refresh_rate_$Port.txt"
-$profilePathsFile = Join-Path $env:TEMP "pcmon_profile_paths_$Port.json"
-# Seed background-worker inputs before the first request so the worker can start
-# immediately without guessing defaults.
-"500" | Out-File -FilePath $script:refreshRateFile -Encoding UTF8 -Force
-$profilePathsJson = @(
-    $PROFILE.AllUsersAllHosts,
-    $PROFILE.AllUsersCurrentHost,
-    $PROFILE.CurrentUserAllHosts,
-    $PROFILE.CurrentUserCurrentHost
-) | Where-Object { $_ } | ConvertTo-Json -Compress
-$profilePathsJson | Out-File -FilePath $profilePathsFile -Encoding UTF8 -Force
-
 Write-Host "  Initializing..." -NoNewline
 $sw2 = [Diagnostics.Stopwatch]::StartNew()
 $sw2.Start()
+
+$script:shuttingDown = $false
+Register-EngineEvent -SourceIdentifier ([System.Management.Automation.PsEngineEvent]::Exiting) -Action {
+    $script:shuttingDown = $true
+    $listener.Stop()
+    Write-Host ""
+    Write-Host "[pcmon] Stopped." -ForegroundColor Yellow
+} | Out-Null
+
 if (Test-Path $cacheFile) {
     try {
         $script:LiveDataCache = Get-Content $cacheFile -Raw -ErrorAction Stop | ConvertFrom-Json
@@ -250,7 +260,10 @@ try {
         }
         $request = $context.Request
         $response = $context.Response
-        $response.Headers.Add("Access-Control-Allow-Origin", "*")
+        $origin = $request.Headers.Get("Origin")
+        if ($origin -and $origin -match '^http://(localhost|127\.0\.0\.1):\d+$') {
+            $response.Headers.Add("Access-Control-Allow-Origin", $origin)
+        }
         $path = $request.Url.LocalPath
 
         if ($path -eq "/health") {
@@ -395,12 +408,12 @@ try {
                 $csvLines = @("Name,PID,Working Set (MB),CPU Time,Threads,Handles")
                 foreach ($p in $topRam) {
                     $name = if ($p.name) { $p.name.Replace(',', '_') } else { 'N/A' }
-                    $pid = if ($p.pid) { $p.pid } else { 0 }
+                    $procId = if ($p.pid) { $p.pid } else { 0 }
                     $ws = if ($p.ws_mb) { $p.ws_mb } else { 0 }
                     $cpu = if ($p.cpu_s) { $p.cpu_s } else { 0 }
                     $threads = if ($p.threads) { $p.threads } else { 0 }
                     $handles = if ($p.handles) { $p.handles } else { 0 }
-                    $csvLines += "$name,$pid,$ws,$cpu,$threads,$handles"
+                    $csvLines += "$name,$procId,$ws,$cpu,$threads,$handles"
                 }
                 $csvContent = $csvLines -join "`n"
                 $buffer = [System.Text.Encoding]::UTF8.GetBytes($csvContent)
@@ -434,8 +447,8 @@ try {
                 Send-Response $response $null "application/json"
                 continue
             }
-            $pid = [int]$matches[1]
-            $result = Stop-ProcessById -ProcessId $pid -Force
+            $procId = [int]$matches[1]
+            $result = Stop-ProcessById -ProcessId $procId -Force
             $json = $result | ConvertTo-Json -Compress
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
             $response.ContentType = "application/json"
@@ -449,8 +462,8 @@ try {
                 Send-Response $response $null "application/json"
                 continue
             }
-            $pid = [int]$matches[1]
-            $result = Suspend-ProcessById -ProcessId $pid
+            $procId = [int]$matches[1]
+            $result = Suspend-ProcessById -ProcessId $procId
             $json = $result | ConvertTo-Json -Compress
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
             $response.ContentType = "application/json"
@@ -464,8 +477,8 @@ try {
                 Send-Response $response $null "application/json"
                 continue
             }
-            $pid = [int]$matches[1]
-            $result = Resume-ProcessById -ProcessId $pid
+            $procId = [int]$matches[1]
+            $result = Resume-ProcessById -ProcessId $procId
             $json = $result | ConvertTo-Json -Compress
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
             $response.ContentType = "application/json"
@@ -473,6 +486,12 @@ try {
             Send-Response $response $buffer "application/json"
         }
         elseif ($path -eq "/api/report") {
+            if ($request.HttpMethod -ne "GET") {
+                $response.StatusCode = 405
+                $response.ContentLength64 = 0
+                Send-Response $response $null "application/json"
+                continue
+            }
             if (Test-Path $cacheFile) {
                 try { $data = Get-Content $cacheFile -Raw | ConvertFrom-Json } catch { $data = Get-LiveData }
             } else { $data = Get-LiveData }
@@ -562,6 +581,12 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
             Send-Response $response $buffer "text/html; charset=utf-8"
         }
         elseif ($path -eq "/api/report/download") {
+            if ($request.HttpMethod -ne "GET") {
+                $response.StatusCode = 405
+                $response.ContentLength64 = 0
+                Send-Response $response $null "application/json"
+                continue
+            }
             if (Test-Path $cacheFile) {
                 try { $data = Get-Content $cacheFile -Raw | ConvertFrom-Json } catch { $data = Get-LiveData }
             } else { $data = Get-LiveData }
@@ -646,7 +671,20 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($html)
             Send-Response $response $buffer "text/html; charset=utf-8" "attachment; filename=`"$filename`""
         }
-        elseif (($path -eq "/api/thresholds" -or $path -eq "/api/config") -and $request.HttpMethod -eq "GET") {
+        elseif ($path -eq "/api/thresholds" -and $request.HttpMethod -ne "GET") {
+            $response.StatusCode = 405
+            $response.ContentLength64 = 0
+            Send-Response $response $null "application/json"
+            continue
+        }
+        elseif ($path -eq "/api/thresholds" -and $request.HttpMethod -eq "GET") {
+            $json = $script:AlertThresholds | ConvertTo-Json -Compress
+            $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
+            $response.ContentType = "application/json"
+            $response.ContentLength64 = $buffer.Length
+            Send-Response $response $buffer "application/json"
+        }
+        elseif ($path -eq "/api/config" -and $request.HttpMethod -eq "GET") {
             $json = $script:AlertThresholds | ConvertTo-Json -Compress
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
             $response.ContentType = "application/json"
@@ -681,6 +719,12 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
             Send-Response $response $buffer "application/json"
         }
         elseif ($path -eq "/api/bootstrap") {
+            if ($request.HttpMethod -ne "GET") {
+                $response.StatusCode = 405
+                $response.ContentLength64 = 0
+                Send-Response $response $null "application/json"
+                continue
+            }
             $json = @{
                 csrf_token = [guid]::NewGuid().ToString()
                 thresholds = $script:AlertThresholds
@@ -712,15 +756,52 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
             $response.ContentLength64 = $buffer.Length
             Send-Response $response $buffer "application/json"
         }
-        elseif ($path -eq "/api/info" -and $request.HttpMethod -eq "GET") {
+        elseif ($path -eq "/api/info") {
+            if ($request.HttpMethod -ne "GET") {
+                $response.StatusCode = 405
+                $response.ContentLength64 = 0
+                Send-Response $response $null "application/json"
+                continue
+            }
             $uptime = 0
             try { $uptime = [math]::Round((New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds) } catch {}
             $conn = ""
             try { $conn = [string]$script:ConnectionMethod } catch {}
             $wsCount = 0
             try { $wsCount = [int]$script:WSClients.Count } catch {}
-            $info = "{`"method`":`"$conn`",`"uptime`":$uptime,`"ws_clients`":$wsCount,`"ps_version`":`"$($PSVersionTable.PSVersion.ToString())`",`"hostname`":`"$env:COMPUTERNAME`"}"
+            $info = @{
+                method = $conn
+                uptime = $uptime
+                ws_clients = $wsCount
+                ps_version = $PSVersionTable.PSVersion.ToString()
+                hostname = $env:COMPUTERNAME
+            } | ConvertTo-Json -Compress
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($info)
+            $response.ContentType = "application/json"
+            $response.ContentLength64 = $buffer.Length
+            Send-Response $response $buffer "application/json"
+        }
+        elseif ($path -eq "/api/export" -and $request.HttpMethod -eq "GET") {
+            $cacheFile = Join-Path $TEMP_DIR "pcmon_cache_$Port.json"
+            $data = $null
+            if (Test-Path $cacheFile) {
+                try {
+                    $json = [System.IO.File]::ReadAllText($cacheFile)
+                    $data = $json | ConvertFrom-Json -ErrorAction SilentlyContinue
+                } catch { }
+            }
+            if (-not $data) {
+                $data = Get-LiveData -Force
+            }
+            $exportObj = @{
+                exported_at = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+                hostname = $env:COMPUTERNAME
+                data = $data
+                thresholds = $script:AlertThresholds
+                version = "1.0"
+            }
+            $json = $exportObj | ConvertTo-Json -Depth 20 -Compress
+            $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
             $response.ContentType = "application/json"
             $response.ContentLength64 = $buffer.Length
             Send-Response $response $buffer "application/json"
@@ -797,10 +878,4 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
 }
 
 $shuttingDown = $false
-Register-EngineEvent -SourceIdentifier ([System.Management.Automation.PsEngineEvent]::Exiting) -Action {
-    $script:shuttingDown = $true
-    $listener.Stop()
-    Write-Host ""
-    Write-Host "[pcmon] Stopped." -ForegroundColor Yellow
-} | Out-Null
 #endregion
