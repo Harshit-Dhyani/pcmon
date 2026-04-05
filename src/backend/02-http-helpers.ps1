@@ -1,3 +1,19 @@
+function Broadcast-WebSocketData {
+    param([object]$Data)
+    if ($script:WSClients.Count -eq 0) { return }
+    $json = $null
+    try { $json = $Data | ConvertTo-Json -Compress -Depth 20 } catch { return }
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+    $buffer = [byte[]]::new(4096)
+    foreach ($ws in @($script:WSClients)) {
+        try {
+            if ($ws.State -eq 'Open') {
+                $ws.SendAsync([ArraySegment[byte]]$bytes, 'Text', $true, [System.Threading.CancellationToken]::None)
+            }
+        } catch {}
+    }
+}
+
 function Send-Response($response, $data, $type = "application/json", $contentDisposition = $null) {
     try {
         if ($null -ne $contentDisposition -and $contentDisposition -ne "") {

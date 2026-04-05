@@ -19,11 +19,11 @@ $CSS_FILE = Join-Path $WEB_SRC "dashboard.css"
 $BACKEND_SRC = Join-Path $SRC_DIR "backend"
 $OUT_DIR = Split-Path $SRC_DIR -Parent
 $OUT_BACKEND = Join-Path $OUT_DIR "pcmon.ps1"
-$OUT_FRONTEND = Join-Path $OUT_DIR "web"
+$OUT_FRONTEND = Join-Path $OUT_DIR "dist"
 
 $FRONTEND_MODULES = @("1-config.js","2-utils.js","3-stream.js","4-api.js","5-render.js")
-$DIST_OUT = Join-Path $OUT_FRONTEND "dist"
-$BACKEND_MODULES = @("00-config.ps1","01-logging.ps1","02-http-helpers.ps1","03-actions.ps1","04-snapshots.ps1","05-collectors.ps1","06-background.ps1","07-server.ps1","main.ps1")
+$DIST_OUT = $OUT_FRONTEND
+$BACKEND_MODULES = @("00-config.ps1","01-logging.ps1","02-http-helpers.ps1","03-actions.ps1","04-snapshots.ps1","05-collectors.ps1","06-background.ps1","07-server.ps1")
 
 function Build-Frontend {
     Write-Host "Building frontend..." -ForegroundColor Cyan
@@ -57,7 +57,7 @@ function Build-Frontend {
     $html = $html -Replace "<script src=`"dashboard.js`"></script>\s*", ""
     $html = $html -Replace "</body>", ("<script>`n" + $js + "`n</script>`n</body>")
     $bc = "<!-- Built " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + " v" + $Version + " | Source: src/web/src/ -->"
-    $html = $html -Replace "(<meta charset)", ($bc + "`n" + "$1")
+    $html = $html -Replace "(<meta charset)", ("$bc`n`$1")
     $outPath = Join-Path $DIST_OUT "index.html"
     $html | Out-File -FilePath $outPath -Encoding UTF8 -NoNewline
     Write-Host ("  Output: " + $outPath) -ForegroundColor Gray
@@ -82,9 +82,13 @@ function Build-Backend {
     foreach ($mod in $BACKEND_MODULES) {
         $path = Join-Path $BACKEND_SRC $mod
         if (-not (Test-Path $path)) { Write-Error "Missing: $path"; exit 1 }
-        $raw = [System.IO.File]::ReadAllText($path)
+        $bytes = [System.IO.File]::ReadAllBytes($path)
+        if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+            $raw = [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
+        } else {
+            $raw = [System.Text.Encoding]::UTF8.GetString($bytes)
+        }
         $raw = $raw.TrimEnd([char]10, [char]13)
-        $raw = $raw -Replace ([char]65279), ""
         $raw = $raw -replace '(?m)^\s*#\s*endregion\s*(\r?\n)', '$1'
         $raw = $raw -replace '(?m)^\s*#\s*region[^\r\n]*\r?\n', ''
         $modName = [System.IO.Path]::GetFileNameWithoutExtension($mod)

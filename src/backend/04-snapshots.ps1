@@ -39,8 +39,19 @@ function Save-Snapshot {
     return @{ id = $timestamp; ts = $snapshot.ts; label = $Label; filename = $filename }
 }
 
+function Test-SnapshotId {
+    param([string]$Id)
+    if ($Id -match '\.\.[/\\]' -or $Id -match '^[a-zA-Z]:' -or $Id -match '[/\\]') {
+        return $false
+    }
+    return $true
+}
+
 function Compare-Snapshots {
     param([string]$SnapshotId)
+    if (-not (Test-SnapshotId -Id $SnapshotId)) {
+        return @{ error = "Invalid snapshot ID" }
+    }
     $files = Get-SnapshotFiles
     $snapshotFile = $files | Where-Object { $_.BaseName -eq "snapshot_$SnapshotId" } | Select-Object -First 1
     if (-not $snapshotFile) { return @{ error = "Snapshot not found" } }
@@ -97,7 +108,7 @@ function Compare-Snapshots {
         }
     }
     $snapProcs = @{}
-    foreach ($p in $snapshotData.top_ram) { $snapProcs[$p.name] = $p }
+    foreach ($p in $snapshot.top_ram) { $snapProcs[$p.name] = $p }
     $currProcs = @{}
     foreach ($p in $currentData.top_ram) { $currProcs[$p.name] = $p }
     $newProcs = @($currProcs.Keys | Where-Object { -not $snapProcs.ContainsKey($_) })

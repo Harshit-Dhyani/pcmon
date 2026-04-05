@@ -9,7 +9,7 @@ function Stop-ProcessById {
         Stop-Process -Id $ProcessId -Force:$Force -ErrorAction Stop
         return @{ success = $true; message = "Process $($proc.ProcessName) terminated" }
     } catch {
-        return @{ success = $false; error = "Operation failed" }
+        return @{ success = $false; error = "Failed to terminate: $($_.Exception.Message)" }
     }
 }
 
@@ -22,7 +22,7 @@ function Suspend-ProcessById {
         $proc.Suspend()
         return @{ success = $true; message = "Process $($proc.ProcessName) suspended" }
     } catch {
-        return @{ success = $false; error = "Operation failed" }
+        return @{ success = $false; error = "Failed to suspend: $($_.Exception.Message)" }
     }
 }
 
@@ -34,6 +34,6 @@ function Resume-ProcessById {
         $proc.Resume()
         return @{ success = $true; message = "Process $($proc.ProcessName) resumed" }
     } catch {
-        return @{ success = $false; error = "Operation failed" }
+        return @{ success = $false; error = "Failed to resume: $($_.Exception.Message)" }
     }
 }
