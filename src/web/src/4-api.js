@@ -13,6 +13,18 @@ function scheduleNextFetch(delay = PCM.refreshInterval) {
   PCM.pollTimer = setTimeout(fetchData, Math.max(500, delay));
 }
 
+function handleLoadingData(data) {
+  PCM.cachedData = data;
+  PCM.perfTimer = Date.now();
+  showAllSkeletons();
+  TXT(EL('hdr-host'), data.hostname || '—');
+  TXT(EL('ts'), data.ts || '--:--:--');
+  TXT(EL('issue-primary-title'), 'Collecting first live sample...');
+  TXT(EL('issue-primary-desc'), 'The dashboard is online; tables will fill as soon as Windows collectors publish the first full payload.');
+  updateDebugPanel(data);
+  updateSettingsConnInfo();
+}
+
 /* ── Fetch ────────────────────────────────────────────────────────── */
 async function fetchData() {
   if (PCM.pollInFlight && PCM.connectionMethod === 'http') return;
@@ -24,6 +36,12 @@ async function fetchData() {
     PCM.perf.fetchMs = performance.now() - t0;
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
+    if (data && data._loading) {
+      handleLoadingData(data);
+      PCM.pollInFlight = false;
+      if (PCM.connectionMethod === 'http') scheduleNextFetch();
+      return;
+    }
     if (PCM.connectionMethod !== 'websocket' && PCM.connectionMethod !== 'sse') {
       const renderStart = performance.now();
       renderAll(data);
@@ -54,13 +72,21 @@ async function loadBootstrap() {
     ]);
     const data = await dataRes.json();
     const config = await configRes.json();
-    PCM.thresholds = { ...PCM.DEFAULT_THRESHOLDS, ...(config.thresholds || {}) };
+    PCM.thresholds = { ...PCM.DEFAULT_THRESHOLDS, ...(config.thresholds || config || {}) };
+    if (data && data._loading) {
+      handleLoadingData(data);
+      return;
+    }
     PCM.cachedData = data;
     PCM.perfTimer = Date.now();
     PCM.firstLoad = false;
     renderAll(data);
     updateDebugPanel(data);
-  } catch (e) { /* keep bootstrap failures silent; the UI will retry on the next tick */ }
+  } catch (e) {
+    showAllSkeletons();
+    TXT(EL('issue-primary-title'), 'Waiting for pcmon data...');
+    TXT(EL('issue-primary-desc'), 'The first collection pass is still warming up.');
+  }
 }
 
 /* ── Process Actions ──────────────────────────────────────────────── */
@@ -108,7 +134,7 @@ async function fetchConfig() {
   try {
     const res = await fetch('/api/config', { cache: 'no-store' });
     const data = await res.json();
-    PCM.thresholds = { ...PCM.DEFAULT_THRESHOLDS, ...(data.thresholds || {}) };
+    PCM.thresholds = { ...PCM.DEFAULT_THRESHOLDS, ...(data.thresholds || data || {}) };
   } catch (e) { /* config fetch is best-effort during startup */ }
 }
 
@@ -148,18 +174,18 @@ async function fetchSnapshots() {
 
 async function deleteSnapshot(id) {
   try {
-    await fetch('/api/snapshots/' + id + '/delete', { method: 'POST', headers: authHeaders() });
+    await fetch('/api/snapshots/' + encodeURIComponent(id) + '/delete', { method: 'POST', headers: authHeaders() });
     renderSnapshots();
   } catch (e) { /* snapshot deletion failures are handled by the UI action state */ }
 }
 
 async function exportSnapshot(id, format) {
-  window.open('/api/snapshots/' + id + '/export.' + format, '_blank');
+  window.open('/api/snapshots/' + encodeURIComponent(id) + '/export.' + format, '_blank');
 }
 
 async function compareSnapshots(id) {
   try {
-    const res = await fetch('/api/snapshots/' + id + '/compare', {
+    const res = await fetch('/api/snapshots/' + encodeURIComponent(id) + '/compare', {
       method: 'POST',
       headers: authHeaders()
     });

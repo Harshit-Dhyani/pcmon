@@ -52,6 +52,9 @@ function issueSeverity(text) {
 }
 
 function summarizePrimaryIssue(data) {
+  if (data && data.collection_state && data.collection_state !== 'valid') {
+    return { title: 'Collector state: ' + data.collection_state, desc: 'pcmon is preserving the last useful data while a collector is degraded.' };
+  }
   const issues = data && Array.isArray(data.insights) ? data.insights : [];
   const first = issues[0] || 'System healthy.';
   if (/critical|less than 1gb|heavy paging|bottleneck/i.test(first)) {
@@ -123,18 +126,30 @@ function renderTable(tbl, rows, cols, opts = {}) {
 /* ── Main render ─────────────────────────────────────────────────── */
 function renderAll(d) {
   if (!d) return;
+  if (d._loading) {
+    handleLoadingData(d);
+    return;
+  }
 
   /* Throttle table updates */
   const now = Date.now();
   const doTables = (now - PCM.lastTableUpdate) > PCM.TABLE_UPDATE_INTERVAL;
   if (doTables) PCM.lastTableUpdate = now;
 
-  hideAllSkeletons();
+  const processReady = subsystemSettled(d, 'processes') && loadedArray(d, 'top_ram') && loadedArray(d, 'top_private') && loadedArray(d, 'top_cpu') && loadedArray(d, 'all_processes');
+  const staticReady = subsystemSettled(d, 'static');
+  const countersReady = subsystemSettled(d, 'counters');
+  const hasFullProcessData = processReady && hasRows(d.top_ram) && hasRows(d.top_private) && hasRows(d.top_cpu) && hasRows(d.all_processes);
+  const hasStaticData = staticReady && (loadedArray(d, 'disks') || loadedArray(d, 'startup') || loadedArray(d, 'pagefile') || loadedArray(d, 'ps_profiles'));
+  const hasGroupData = loadedObject(d, 'groups', 'processes');
+  const hasGpuData = !!(d.gpu && (d.gpu.available || d.gpu.status_text));
+  const hasNetworkData = subsystemSettled(d, 'network') && !!(d.network && (Array.isArray(d.network.adapters) || d.network.status_text));
 
   /* Header */
   if (EL('hdr-host')) EL('hdr-host').textContent = d.hostname || '—';
 
   /* Overview metrics */
+  setCardLoaded('sc-ram', hasMetric(d.ram_pct) && hasMetric(d.ram_avail_mb));
   TXT(EL('sv-ram'), fmtNum(d.ram_pct) + '%');
   TXT(EL('ss-ram'), fmtMem(d.ram_avail_mb) + ' avail');
   COL(EL('sf-ram'), d.ram_pct || 0);
@@ -144,6 +159,7 @@ function renderAll(d) {
   if (EL('sdt-ram')) EL('sdt-ram').textContent = ramTrend;
   PCM.prev.ram = d.ram_pct || 0;
 
+  setCardLoaded('sc-cpu', hasMetric(d.cpu_pct));
   TXT(EL('sv-cpu'), fmtNum(d.cpu_pct) + '%');
   COL(EL('sf-cpu'), d.cpu_pct || 0);
   FILL(EL('sf-cpu'), d.cpu_pct || 0);
@@ -152,6 +168,7 @@ function renderAll(d) {
   if (EL('sdt-cpu')) EL('sdt-cpu').textContent = cpuTrend;
   PCM.prev.cpu = d.cpu_pct || 0;
 
+  setCardLoaded('sc-disk', hasMetric(d.disk_pct));
   TXT(EL('sv-disk'), fmtNum(d.disk_pct) + '%');
   COL(EL('sf-disk'), d.disk_pct || 0);
   FILL(EL('sf-disk'), d.disk_pct || 0);
@@ -159,6 +176,7 @@ function renderAll(d) {
   if (EL('sdt-disk')) EL('sdt-disk').textContent = diskTrend;
   PCM.prev.disk = d.disk_pct || 0;
 
+  setCardLoaded('sc-cm', hasMetric(d.commit_pct));
   TXT(EL('sv-cm'), fmtNum(d.commit_pct) + '%');
   COL(EL('sf-cm'), d.commit_pct || 0);
   FILL(EL('sf-fill-cm'), d.commit_pct || 0);
@@ -177,14 +195,17 @@ function renderAll(d) {
   refreshSparklines(d.cpu_pct || 0, d.ram_pct || 0, d.disk_pct || 0);
 
   /* RAM page */
+  setCardLoaded('r-sc-ram', hasMetric(d.ram_pct) && hasMetric(d.ram_avail_mb));
   TXT(EL('r-sv-ram'), fmtNum(d.ram_pct) + '%');
   TXT(EL('r-avail'), fmtMem(d.ram_avail_mb) + ' / ' + fmtMem((d.ram_total_gb || 0) * 1024));
   COL(EL('r-sf-ram'), d.ram_pct || 0);
   FILL(EL('r-sf-fill-ram'), d.ram_pct || 0);
+  setCardLoaded('r-sc-cm', hasMetric(d.commit_pct));
   TXT(EL('r-sv-cm'), fmtNum(d.commit_pct) + '%');
   TXT(EL('r-ss-cm'), fmtMem((d.commit_gb || 0) * 1024) + ' / ' + fmtMem((d.limit_gb || 0) * 1024));
   COL(EL('r-sf-cm'), d.commit_pct || 0);
   FILL(EL('r-sf-fill-cm'), d.commit_pct || 0);
+  setCardLoaded('r-sc-pg', hasMetric(d.pages_sec));
   TXT(EL('r-sv-pg'), fmtNum(d.pages_sec || 0) + '/s');
   if (EL('r-paged')) EL('r-paged').textContent = fmtMem(d.paged_pool_mb || 0);
   if (EL('r-nonpaged')) EL('r-nonpaged').textContent = fmtMem(d.non_paged_mb || 0);
@@ -192,12 +213,14 @@ function renderAll(d) {
   TXT(EL('r-sv-pgpool'), fmtMem(d.paged_pool_mb || 0) + ' (' + fmtNum(d.paged_pool_pct || 0) + '%)');
   TXT(EL('r-sv-npgpool'), fmtMem(d.non_paged_mb || 0) + ' (' + fmtNum(d.non_paged_pct || 0) + '%)');
   TXT(EL('r-sv-pf'), fmtMem(d.page_file_mb || 0) + ' used');
-  hideSkeleton('r-tbl-sk', 'r-tbl');
+  setSkeleton('r-tbl-sk', 'r-tbl', processReady && loadedArray(d, 'top_private'));
 
   /* CPU page */
+  setCardLoaded('c-sc-cpu', hasMetric(d.cpu_pct));
   TXT(EL('c-sv-cpu'), fmtNum(d.cpu_pct) + '%');
   COL(EL('c-sf-cpu'), d.cpu_pct || 0);
   FILL(EL('c-sf-fill-cpu'), d.cpu_pct || 0);
+  setCardLoaded('c-sc-pg', hasMetric(d.pages_sec));
   TXT(EL('c-sv-pg'), fmtNum(d.pages_sec || 0) + '/s');
   TXT(EL('c-queue'), fmtNum(d.disk_queue || 0));
   const cpu = d.cpu || {};
@@ -207,31 +230,40 @@ function renderAll(d) {
   TXT(EL('cpu-max-clock'), cpu.max_seen_mhz ? fmtNum(cpu.max_seen_mhz) + ' MHz' : '—');
   TXT(EL('cpu-temp'), cpu.temp_supported && cpu.temp_c != null ? fmtNum(cpu.temp_c) + ' C' : '—');
   TXT(EL('cpu-power'), cpu.power_supported && cpu.power_w != null ? fmtNum(cpu.power_w) + ' W' : '—');
-  hideSkeleton('c-tbl-sk', 'c-tbl');
+  setSkeleton('c-tbl-sk', 'c-tbl', processReady && loadedArray(d, 'top_cpu'));
 
   /* Disks */
-  renderDrives(EL('ov-disks'), d.disks);
-  hideSkeleton('disk-drives-sk', 'disk-drives');
-  hideSkeleton('ov-disks-sk', 'ov-disks');
+  if (hasRows(d.disks)) {
+    renderDrives(EL('ov-disks'), d.disks);
+    renderDrives(EL('disk-drives'), d.disks);
+  }
+  setSkeleton('disk-drives-sk', 'disk-drives', staticReady && loadedArray(d, 'disks'));
+  setSkeleton('ov-disks-sk', 'ov-disks', staticReady && loadedArray(d, 'disks'));
 
   const diskIo = EL('disk-io-strip');
   if (diskIo) {
-    diskIo.innerHTML = [
-      { label: 'Disk Read', val: fmtNum(d.disk_read_mb) + ' MB/s' },
-      { label: 'Disk Write', val: fmtNum(d.disk_write_mb) + ' MB/s' },
-      { label: 'Net Sent', val: fmtNum(d.net_sent_kb) + ' KB/s' },
-      { label: 'Net Recv', val: fmtNum(d.net_recv_kb) + ' KB/s' }
-    ].map(ioHtml).join('');
-    hideSkeleton('disk-io-sk', 'disk-io-strip');
+    const ioReady = countersReady && hasMetric(d.disk_read_mb) && hasMetric(d.disk_write_mb) && hasMetric(d.net_sent_kb) && hasMetric(d.net_recv_kb);
+    if (ioReady) {
+      diskIo.innerHTML = [
+        { label: 'Disk Read', val: fmtNum(d.disk_read_mb) + ' MB/s' },
+        { label: 'Disk Write', val: fmtNum(d.disk_write_mb) + ' MB/s' },
+        { label: 'Net Sent', val: fmtNum(d.net_sent_kb) + ' KB/s' },
+        { label: 'Net Recv', val: fmtNum(d.net_recv_kb) + ' KB/s' }
+      ].map(ioHtml).join('');
+    }
+    setSkeleton('disk-io-sk', 'disk-io-strip', ioReady);
   }
 
   const ovIo = EL('ov-io');
   if (ovIo) {
-    ovIo.innerHTML = [
-      { label: 'Disk R/W', val: fmtNum(d.disk_read_mb) + ' / ' + fmtNum(d.disk_write_mb) + ' MB/s' },
-      { label: 'Net S/R', val: fmtNum(d.net_sent_kb) + ' / ' + fmtNum(d.net_recv_kb) + ' KB/s' }
-    ].map(ioHtml).join('');
-    hideSkeleton('ov-io-sk', 'ov-io');
+    const ioReady = countersReady && hasMetric(d.disk_read_mb) && hasMetric(d.disk_write_mb) && hasMetric(d.net_sent_kb) && hasMetric(d.net_recv_kb);
+    if (ioReady) {
+      ovIo.innerHTML = [
+        { label: 'Disk R/W', val: fmtNum(d.disk_read_mb) + ' / ' + fmtNum(d.disk_write_mb) + ' MB/s' },
+        { label: 'Net S/R', val: fmtNum(d.net_sent_kb) + ' / ' + fmtNum(d.net_recv_kb) + ' KB/s' }
+      ].map(ioHtml).join('');
+    }
+    setSkeleton('ov-io-sk', 'ov-io', ioReady);
   }
 
   /* GPU */
@@ -253,8 +285,8 @@ function renderAll(d) {
       TXT(EL('g-copy'), 'N/A');
     }
   }
-  renderGPUAdapters(EL('gpu-adapters'), gpu);
-  hideSkeleton('gpu-adapters-sk', 'gpu-adapters');
+  if (hasGpuData) renderGPUAdapters(EL('gpu-adapters'), gpu);
+  setSkeleton('gpu-adapters-sk', 'gpu-adapters', hasGpuData);
 
   /* Groups */
   const groups = d.groups || {};
@@ -276,73 +308,78 @@ function renderAll(d) {
     if (groups.browser) items.push('Browser: ' + fmtMem(groups.browser.ws_mb) + ' (' + groups.browser.count + ' tabs)');
     if (groups.dev_tools) items.push('Dev Tools: ' + fmtMem(groups.dev_tools.ws_mb) + ' (' + groups.dev_tools.count + ' tools)');
     if (groups.security) items.push('Security: ' + fmtMem(groups.security.ws_mb) + ' (' + groups.security.count + ' services)');
-    gi.innerHTML = items.length ? items.map(t => '<div class="insight">' + esc(t) + '</div>').join('') : '<div class="note" style="padding:6px 0">No group activity detected.</div>';
-    hideSkeleton('group-insights-sk', 'group-insights');
+    if (hasGroupData) gi.innerHTML = items.length ? items.map(t => '<div class="insight">' + esc(t) + '</div>').join('') : '<div class="note" style="padding:6px 0">No group activity detected.</div>';
+    setSkeleton('group-insights-sk', 'group-insights', hasGroupData);
   }
 
   /* System */
   const sysSummary = EL('sys-summary');
   if (sysSummary) {
     const network = d.network || {};
-    sysSummary.innerHTML = [
+    const subsystems = d.subsystems || {};
+    const systemReady = !!(d.hostname && d.os_caption && (hasStaticData || hasNetworkData || hasMetric(d.ram_total_gb)));
+    if (systemReady) sysSummary.innerHTML = [
       ['Hostname', esc(d.hostname) || '—'],
       ['OS', esc(d.os_caption) || '—'],
       ['Total Processes', d.total_procs || 0],
       ['RAM Total', fmtMem((d.ram_total_gb || 0) * 1024)],
       ['Commit Limit', fmtMem((d.limit_gb || 0) * 1024)],
+      ['Collector', esc(d.collection_state || 'valid')],
+      ['Counters', esc(subsystems.counters || 'unknown')],
       ['Network', esc(network.status_text || 'Unknown')],
       ['Primary Adapter', esc(network.busiest_adapter || '—')]
     ].map(([k, v]) => '<div class="sys-row"><span>' + k + '</span><span>' + v + '</span></div>').join('');
-    hideSkeleton('sys-summary-sk', 'sys-summary');
+    setSkeleton('sys-summary-sk', 'sys-summary', systemReady);
   }
 
   /* Throttled tables */
   if (doTables) {
     const topRamData = (d.top_ram || []).slice(0, 20);
-    renderTable(EL('ov-tbl'), topRamData.map(p => [p.name || '?', p.pid || 0, fmtMem(p.ws_mb), fmtNum(p.cpu_s, 1) + 's']), ['Name', 'PID', 'WS', 'CPU'], { actions: true, processData: topRamData });
-    hideSkeleton('ov-tbl-sk', 'ov-tbl');
+    if (processReady && loadedArray(d, 'top_ram')) renderTable(EL('ov-tbl'), topRamData.map(p => [p.name || '?', p.pid || 0, fmtMem(p.ws_mb), fmtNum(p.cpu_s, 1) + 's']), ['Name', 'PID', 'WS', 'CPU'], { actions: true, processData: topRamData });
+    setSkeleton('ov-tbl-sk', 'ov-tbl', processReady && loadedArray(d, 'top_ram'));
 
     const topPrivData = (d.top_private || []).slice(0, 20);
-    renderTable(EL('r-tbl'), topPrivData.map(p => [p.name || '?', p.pid || 0, fmtMem(p.ws_mb), fmtMem(p.private_mb)]), ['Name', 'PID', 'WS', 'Private'], { actions: true, processData: topPrivData });
-    hideSkeleton('r-tbl-sk', 'r-tbl');
+    if (processReady && loadedArray(d, 'top_private')) renderTable(EL('r-tbl'), topPrivData.map(p => [p.name || '?', p.pid || 0, fmtMem(p.ws_mb), fmtMem(p.private_mb)]), ['Name', 'PID', 'WS', 'Private'], { actions: true, processData: topPrivData });
+    setSkeleton('r-tbl-sk', 'r-tbl', processReady && loadedArray(d, 'top_private'));
 
     const topCpuData = (d.top_cpu || []).slice(0, 20);
-    renderTable(EL('c-tbl'), topCpuData.map(p => [p.name || '?', p.pid || 0, fmtNum(p.cpu_s, 1) + 's', fmtMem(p.ws_mb)]), ['Name', 'PID', 'CPU Time', 'WS'], { actions: true, processData: topCpuData });
-    hideSkeleton('c-tbl-sk', 'c-tbl');
+    if (processReady && loadedArray(d, 'top_cpu')) renderTable(EL('c-tbl'), topCpuData.map(p => [p.name || '?', p.pid || 0, fmtNum(p.cpu_s, 1) + 's', fmtMem(p.ws_mb)]), ['Name', 'PID', 'CPU Time', 'WS'], { actions: true, processData: topCpuData });
+    setSkeleton('c-tbl-sk', 'c-tbl', processReady && loadedArray(d, 'top_cpu'));
 
     const susData = (d.suspicious || []).slice(0, 30);
-    renderTable(EL('sus-tbl'), susData.map(p => [p.name || '?', p.pid || 0, fmtMem(p.ws_mb), p.command_line ? 'Yes' : 'No']), ['Name', 'PID', 'WS', 'CLI?'], { actions: true, processData: susData });
-    hideSkeleton('sus-tbl-sk', 'sus-tbl');
+    if (hasRows(d.suspicious)) renderTable(EL('sus-tbl'), susData.map(p => [p.name || '?', p.pid || 0, fmtMem(p.ws_mb), p.command_line ? 'Yes' : 'No']), ['Name', 'PID', 'WS', 'CLI?'], { actions: true, processData: susData });
+    setSkeleton('sus-tbl-sk', 'sus-tbl', processReady && Array.isArray(d.suspicious));
 
     const svcData = (d.heavy_services || []).slice(0, 25);
-    renderTable(EL('svc-tbl'), svcData.map(s => [s.display_name || s.name || '?', s.name || '?', s.state || '?', s.start_mode || '?', s.pid || 0, fmtMem((d.top_ram || []).find(p => p.pid == s.pid)?.ws_mb || 0)]), ['Display Name', 'Name', 'State', 'Start', 'PID', 'WS'], { emptyText: 'No matching heavy services in the current sample.' });
-    hideSkeleton('svc-tbl-sk', 'svc-tbl');
+    if (processReady && Array.isArray(d.heavy_services)) renderTable(EL('svc-tbl'), svcData.map(s => [s.display_name || s.name || '?', s.name || '?', s.state || '?', s.start_mode || '?', s.pid || 0, fmtMem((d.top_ram || []).find(p => p.pid == s.pid)?.ws_mb || 0)]), ['Display Name', 'Name', 'State', 'Start', 'PID', 'WS'], { emptyText: 'No matching heavy services in the current sample.' });
+    setSkeleton('svc-tbl-sk', 'svc-tbl', processReady && Array.isArray(d.heavy_services));
 
     /* System page */
-    renderDrives(EL('disk-drives'), d.disks);
+    if (hasRows(d.disks)) renderDrives(EL('disk-drives'), d.disks);
+    setSkeleton('disk-drives-sk', 'disk-drives', staticReady && loadedArray(d, 'disks'));
 
     const startupData = (d.startup || []).slice(0, 20);
-    renderTable(EL('startup-tbl'), startupData.map(s => [s.name || '?', s.command || '?', s.location || '?']), ['Name', 'Command', 'Location'], { emptyText: 'No startup items were returned by Windows.' });
-    hideSkeleton('startup-tbl-sk', 'startup-tbl');
+    if (staticReady && Array.isArray(d.startup)) renderTable(EL('startup-tbl'), startupData.map(s => [s.name || '?', s.command || '?', s.location || '?']), ['Name', 'Command', 'Location'], { emptyText: 'No startup items were returned by Windows.' });
+    setSkeleton('startup-tbl-sk', 'startup-tbl', staticReady && Array.isArray(d.startup));
 
     const pfData = (d.pagefile || []).slice(0, 5);
-    renderTable(EL('pagefile-tbl'), pfData.map(p => [p.name || '?', fmtMem(p.allocated_mb), fmtMem(p.current_usage_mb), fmtMem(p.peak_usage_mb)]), ['Name', 'Allocated MB', 'Current MB', 'Peak MB'], { emptyText: 'No page file data was returned.' });
-    hideSkeleton('pagefile-tbl-sk', 'pagefile-tbl');
+    if (staticReady && Array.isArray(d.pagefile)) renderTable(EL('pagefile-tbl'), pfData.map(p => [p.name || '?', fmtMem(p.allocated_mb), fmtMem(p.current_usage_mb), fmtMem(p.peak_usage_mb)]), ['Name', 'Allocated MB', 'Current MB', 'Peak MB'], { emptyText: 'No page file data was returned.' });
+    setSkeleton('pagefile-tbl-sk', 'pagefile-tbl', staticReady && Array.isArray(d.pagefile));
 
     const profiles = (d.ps_profiles || []);
-    renderTable(EL('profiles-tbl'), profiles.map(p => [p.path || '?', p.size_kb ? fmtMem(p.size_kb) : (p.exists ? '0 KB' : 'Missing')]), ['Profile Path', 'Size'], { emptyText: 'No PowerShell profile paths were discovered.' });
-    hideSkeleton('profiles-tbl-sk', 'profiles-tbl');
+    if (staticReady && Array.isArray(d.ps_profiles)) renderTable(EL('profiles-tbl'), profiles.map(p => [p.path || '?', p.size_kb ? fmtMem(p.size_kb) : (p.exists ? '0 KB' : 'Missing')]), ['Profile Path', 'Size'], { emptyText: 'No PowerShell profile paths were discovered.' });
+    setSkeleton('profiles-tbl-sk', 'profiles-tbl', staticReady && Array.isArray(d.ps_profiles));
 
     const networkAdapters = ((d.network && d.network.adapters) || []).slice(0, 12);
     // This table is inventory/state, so it updates with the throttled table cadence
     // instead of every fast metric tick.
-    renderTable(EL('net-tbl'), networkAdapters.map(n => [n.name || '?', n.kind || '?', n.status || '?', n.link_speed || '—', n.media_type || '—']), ['Name', 'Type', 'Status', 'Link', 'Media'], { emptyText: 'No physical network adapters were detected.' });
-    hideSkeleton('net-tbl-sk', 'net-tbl');
+    if (hasNetworkData) renderTable(EL('net-tbl'), networkAdapters.map(n => [n.name || '?', n.kind || '?', n.status || '?', n.link_speed || '—', n.media_type || '—']), ['Name', 'Type', 'Status', 'Link', 'Media'], { emptyText: 'No physical network adapters were detected.' });
+    setSkeleton('net-tbl-sk', 'net-tbl', hasNetworkData);
 
     /* All Processes */
     const allProcs = (d.all_processes || []).slice(0, 100);
-    renderTable(EL('all-tbl'), allProcs.map(p => [p.name || '?', p.pid || 0, fmtMem(p.ws_mb), fmtNum(p.cpu_s, 1) + 's', p.threads || 0, p.handles || 0]), ['Name', 'PID', 'WS', 'CPU', 'Threads', 'Handles'], { actions: true, processData: allProcs });
-    hideSkeleton('all-tbl-sk', 'all-tbl');
+    if (processReady && loadedArray(d, 'all_processes')) renderTable(EL('all-tbl'), allProcs.map(p => [p.name || '?', p.pid || 0, fmtMem(p.ws_mb), fmtNum(p.cpu_s, 1) + 's', p.threads || 0, p.handles || 0]), ['Name', 'PID', 'WS', 'CPU', 'Threads', 'Handles'], { actions: true, processData: allProcs });
+    setSkeleton('all-tbl-sk', 'all-tbl', processReady && loadedArray(d, 'all_processes'));
 
     /* Insights */
     const insEl = EL('insights-list');
@@ -406,7 +443,7 @@ function updateDebugPanel(data) {
     dbgMem.innerHTML = mem
       ? '<div class="sys-row"><span>JS Heap Used</span><span>' + mem.used + ' MB</span></div><div class="sys-row"><span>JS Heap Total</span><span>' + mem.total + ' MB</span></div><div class="sys-row"><span>JS Heap Limit</span><span>' + mem.limit + ' MB</span></div><div class="sys-row"><span>Utilization</span><span>' + Math.round(mem.used / mem.limit * 100) + '%</span></div>'
       : '<div class="note">Memory API not available (Chrome only)</div>';
-    hideSkeleton('dbg-mem-sk', 'dbg-mem');
+    setSkeleton('dbg-mem-sk', 'dbg-mem', !data || !data._loading);
   }
 
   const isLoading = data && data._loading;
@@ -416,12 +453,14 @@ function updateDebugPanel(data) {
     dbgTl.innerHTML = '' +
       '<div class="sys-row"><span>Status</span><span style="color:' + (isLoading ? 'var(--warn)' : 'var(--ok)') + '">' + (isLoading ? 'Collecting data...' : 'Live') + '</span></div>' +
       '<div class="sys-row"><span>Connection</span><span>' + (connIcons[PCM.connectionMethod] || '?') + ' ' + PCM.connectionMethod + '</span></div>' +
-      '<div class="sys-row"><span>Refresh</span><span>' + PCM.refreshInterval + 'ms</span></div>' +
-      '<div class="sys-row"><span>Table Update</span><span>' + PCM.TABLE_UPDATE_INTERVAL + 'ms</span></div>' +
+      '<div class="sys-row"><span>Fast Metrics</span><span>' + PCM.refreshInterval + 'ms</span></div>' +
+      '<div class="sys-row"><span>Tables</span><span>' + PCM.TABLE_UPDATE_INTERVAL + 'ms</span></div>' +
+      '<div class="sys-row"><span>Static</span><span>~30000ms</span></div>' +
       '<div class="sys-row"><span>Data Age</span><span>' + (PCM.cachedData && !isLoading ? ((Date.now() - PCM.perfTimer) / 1000).toFixed(1) + 's ago' : '—') + '</span></div>' +
+      '<div class="sys-row"><span>Collector</span><span>' + esc((data && data.collection_state) || 'valid') + '</span></div>' +
       '<div class="sys-row"><span>Processes</span><span>' + (data ? data.total_procs : '—') + '</span></div>' +
       '<div class="sys-row"><span>DOM Nodes</span><span>' + document.querySelectorAll('*').length + '</span></div>';
-    hideSkeleton('dbg-timeline-sk', 'dbg-timeline');
+    setSkeleton('dbg-timeline-sk', 'dbg-timeline', !isLoading);
   }
 
   const dbgSys = EL('dbg-sys-metrics');
@@ -435,7 +474,7 @@ function updateDebugPanel(data) {
         '<div class="sys-row"><span>Pages/sec</span><span>' + fmtNum(data.pages_sec || 0) + '</span></div>' +
         '<div class="sys-row"><span>Non-Paged Pool</span><span>' + fmtMem(data.non_paged_mb || 0) + '</span></div>' +
         '<div class="sys-row"><span>Perf (BE)</span><span>' + (data._perf_ms ? data._perf_ms + ' ms' : '—') + '</span></div>';
-    hideSkeleton('dbg-sys-metrics-sk', 'dbg-sys-metrics');
+    setSkeleton('dbg-sys-metrics-sk', 'dbg-sys-metrics', !isLoading);
   }
 
   const dbgCache = EL('dbg-cache');
@@ -446,8 +485,9 @@ function updateDebugPanel(data) {
     dbgCache.innerHTML = '' +
       '<div class="sys-row"><span>Status</span><span style="color:' + (isLoading || PCM.pollInFlight ? 'var(--warn)' : 'var(--ok)') + '">' + (isLoading || PCM.pollInFlight ? 'Collecting...' : 'Ready') + '</span></div>' +
       '<div class="sys-row"><span>Connection</span><span style="color:' + connColor + '">' + (connIcons[PCM.connectionMethod] || '?') + ' ' + (connLabels[PCM.connectionMethod] || PCM.connectionMethod) + '</span></div>' +
-      '<div class="sys-row"><span>Refresh</span><span>' + PCM.refreshInterval + 'ms</span></div>';
-    hideSkeleton('dbg-cache-sk', 'dbg-cache');
+      '<div class="sys-row"><span>Fast Metrics</span><span>' + PCM.refreshInterval + 'ms</span></div>' +
+      '<div class="sys-row"><span>Full Tables</span><span>' + PCM.TABLE_UPDATE_INTERVAL + 'ms</span></div>';
+    setSkeleton('dbg-cache-sk', 'dbg-cache', !isLoading);
   }
 
   const dbgErrCount = EL('js-err-count');
@@ -588,28 +628,37 @@ function initSnapshots() {
 async function renderSnapshots() {
   const sk = EL('snapshots-tbl-sk');
   const tbl = EL('snapshots-tbl');
-  if (sk) sk.style.display = 'none';
   if (!tbl) return;
-  tbl.style.display = '';
   const snapshots = await fetchSnapshots();
+  if (sk) sk.style.display = 'none';
+  tbl.style.display = '';
   if (!snapshots || snapshots.length === 0) {
     tbl.innerHTML = '<tbody><tr><td colspan="5"><div class="note">No snapshots yet. Click Save Snapshot to create one.</div></td></tr></tbody>';
     return;
   }
   let html = '<tbody>';
   snapshots.forEach(s => {
-    const escapedId = s.id ? s.id.replace(/'/g, "\\'") : '';
     html += '<tr>' +
       '<td>' + esc(s.ts) + '</td>' +
       '<td>' + esc(s.label || '') + '</td>' +
-      '<td><button class="btn-sm" onclick="compareSnapshot(\'' + escapedId + '\')">Compare</button></td>' +
-      '<td><button class="btn-sm" onclick="exportSnapshot(\'' + escapedId + '\',\'json\')">JSON</button>' +
-          '<button class="btn-sm" onclick="exportSnapshot(\'' + escapedId + '\',\'csv\')">CSV</button></td>' +
-      '<td><button class="btn-sm btn-danger" onclick="deleteSnapshot(\'' + escapedId + '\')">X</button></td>' +
+      '<td><button class="btn-sm snap-action" data-action="compare" data-id="' + esc(s.id || '') + '">Compare</button></td>' +
+      '<td><button class="btn-sm snap-action" data-action="export-json" data-id="' + esc(s.id || '') + '">JSON</button>' +
+          '<button class="btn-sm snap-action" data-action="export-csv" data-id="' + esc(s.id || '') + '">CSV</button></td>' +
+      '<td><button class="btn-sm btn-danger snap-action" data-action="delete" data-id="' + esc(s.id || '') + '">X</button></td>' +
       '</tr>';
   });
   html += '</tbody>';
   tbl.innerHTML = html;
+  tbl.querySelectorAll('.snap-action').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id || '';
+      if (!id) return;
+      if (btn.dataset.action === 'compare') compareSnapshot(id);
+      if (btn.dataset.action === 'export-json') exportSnapshot(id, 'json');
+      if (btn.dataset.action === 'export-csv') exportSnapshot(id, 'csv');
+      if (btn.dataset.action === 'delete') deleteSnapshot(id);
+    });
+  });
 }
 
 /* ── Thresholds ──────────────────────────────────────────────────── */
@@ -727,7 +776,7 @@ window.deleteSnapshot = deleteSnapshot;
 
 /* ── Boot ────────────────────────────────────────────────────────── */
 async function start() {
-  await loadBootstrap();
+  showAllSkeletons();
   initTabs();
   initRefreshSelector();
   initSearchFilters();
@@ -736,6 +785,9 @@ async function start() {
   initReportButtons();
   initExportButton();
   initStream();
+  loadBootstrap().finally(() => {
+    if (PCM.connectionMethod === 'http' || PCM.connectionMethod === 'unknown') fetchData();
+  });
 }
 
 document.readyState === 'loading'

@@ -19,6 +19,8 @@ function tryWebSocket() {
         const data = JSON.parse(event.data);
         if (data._fast) {
           handleFastUpdate(data);
+        } else if (data._loading) {
+          handleLoadingData(data);
         } else {
           const renderStart = performance.now();
           renderAll(data);
@@ -57,6 +59,8 @@ function trySSE() {
         const data = JSON.parse(event.data);
         if (data._fast) {
           handleFastUpdate(data);
+        } else if (data._loading) {
+          handleLoadingData(data);
         } else {
           const renderStart = performance.now();
           renderAll(data);
