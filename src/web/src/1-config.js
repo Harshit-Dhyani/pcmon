@@ -13,7 +13,6 @@ const PCM = {
   firstLoad: true,
   lastTableUpdate: 0,
   thresholds: {},
-  csrfToken: '',
   connectionMethod: 'unknown',
   eventSource: null,
   wsSocket: null,

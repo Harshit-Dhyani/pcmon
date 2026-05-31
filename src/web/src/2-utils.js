@@ -82,6 +82,44 @@ function hideSkeleton(skId, tableId) {
   if (tbl) tbl.style.display = '';
 }
 
+function setSkeleton(skId, contentId, ready) {
+  if (ready) hideSkeleton(skId, contentId);
+  else showSkeleton(skId, contentId);
+}
+
+function hasRows(rows) {
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+function hasObjectRows(rows) {
+  return rows && typeof rows === 'object' && Object.keys(rows).length > 0;
+}
+
+function hasMetric(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function subsystemState(data, key) {
+  return data && data.subsystems && data.subsystems[key] ? String(data.subsystems[key]) : '';
+}
+
+function subsystemSettled(data, key) {
+  const state = subsystemState(data, key);
+  return state && !['warming', 'transiently_unavailable', 'error'].includes(state);
+}
+
+function loadedArray(data, field, subsystemKey) {
+  if (!data || !Array.isArray(data[field])) return false;
+  if (!subsystemKey) return true;
+  return subsystemSettled(data, subsystemKey);
+}
+
+function loadedObject(data, field, subsystemKey) {
+  if (!data || !data[field] || typeof data[field] !== 'object') return false;
+  if (!subsystemKey) return true;
+  return subsystemSettled(data, subsystemKey);
+}
+
 function unloadCard(cardEl) {
   if (cardEl) cardEl.classList.remove('loading');
 }
@@ -94,10 +132,12 @@ function showAllSkeletons() {
   const cardIds = ['sc-ram', 'sc-cpu', 'sc-disk', 'sc-cm', 'r-sc-ram', 'r-sc-cm', 'r-sc-pg', 'c-sc-cpu', 'c-sc-pg'];
   cardIds.forEach(id => { const el = EL(id); if (el) el.classList.add('loading'); });
   const skPairs = [
+    // Keep skeleton mappings centralized so newly-added tables do not get stuck
+    // in loading state after render.
     ['ov-tbl-sk', 'ov-tbl'], ['r-tbl-sk', 'r-tbl'], ['c-tbl-sk', 'c-tbl'],
     ['sus-tbl-sk', 'sus-tbl'], ['svc-tbl-sk', 'svc-tbl'],
     ['startup-tbl-sk', 'startup-tbl'], ['pagefile-tbl-sk', 'pagefile-tbl'],
-    ['profiles-tbl-sk', 'profiles-tbl'], ['all-tbl-sk', 'all-tbl'],
+    ['profiles-tbl-sk', 'profiles-tbl'], ['net-tbl-sk', 'net-tbl'], ['all-tbl-sk', 'all-tbl'],
     ['ov-disks-sk', 'ov-disks'], ['disk-drives-sk', 'disk-drives'],
     ['disk-io-sk', 'disk-io-strip'], ['ov-io-sk', 'ov-io'],
     ['gpu-adapters-sk', 'gpu-adapters'], ['group-insights-sk', 'group-insights'],
@@ -111,6 +151,13 @@ function showAllSkeletons() {
 function hideAllSkeletons() {
   const cardIds = ['sc-ram', 'sc-cpu', 'sc-disk', 'sc-cm', 'r-sc-ram', 'r-sc-cm', 'r-sc-pg', 'c-sc-cpu', 'c-sc-pg'];
   cardIds.forEach(id => { const el = EL(id); if (el) el.classList.remove('loading'); });
+}
+
+function setCardLoaded(cardId, ready) {
+  const el = EL(cardId);
+  if (!el) return;
+  if (ready) el.classList.remove('loading');
+  else el.classList.add('loading');
 }
 
 /* ── Sparklines ───────────────────────────────────────────────────── */
@@ -302,16 +349,24 @@ function handleFastUpdate(data) {
   const ramStatus = ramPct > PCM.thresholds.ram_pct ? 'bad' : ramPct > PCM.thresholds.ram_pct * 0.8 ? 'warn' : 'ok';
   const cpuStatus = cpuPct > PCM.thresholds.cpu_pct ? 'bad' : cpuPct > PCM.thresholds.cpu_pct * 0.8 ? 'warn' : 'ok';
 
+  setCardLoaded('sc-ram', hasMetric(data.ram_pct) && hasMetric(data.ram_avail_mb));
+  setCardLoaded('r-sc-ram', hasMetric(data.ram_pct) && hasMetric(data.ram_avail_mb));
   TXT(EL('sv-ram'), ramPct.toFixed(1) + '%');
   TXT(EL('ss-ram'), data.ram_avail_mb + ' MB avail');
   COL(EL('sf-ram'), ramPct);
   if (EL('sb-ram')) EL('sb-ram').textContent = ramPct > PCM.thresholds.ram_pct ? 'HIGH' : '';
 
+  setCardLoaded('sc-cpu', hasMetric(data.cpu_pct));
+  setCardLoaded('c-sc-cpu', hasMetric(data.cpu_pct));
   TXT(EL('sv-cpu'), cpuPct.toFixed(1) + '%');
   COL(EL('sf-cpu'), cpuPct);
   if (EL('sb-cpu')) EL('sb-cpu').textContent = cpuPct > PCM.thresholds.cpu_pct ? 'HIGH' : '';
 
+  setCardLoaded('sc-disk', hasMetric(data.disk_pct));
   if (EL('sv-disk')) { TXT(EL('sv-disk'), diskPct.toFixed(1) + '%'); COL(EL('sf-disk'), diskPct); }
+
+  setCardLoaded('sc-cm', hasMetric(data.commit_pct));
+  setCardLoaded('r-sc-cm', hasMetric(data.commit_pct));
 
   if (EL('r-sv-ram')) { TXT(EL('r-sv-ram'), ramPct.toFixed(1) + '%'); TXT(EL('r-avail'), data.ram_avail_mb + ' MB'); COL(EL('r-sf-ram'), ramPct); }
   if (EL('c-sv-cpu')) { TXT(EL('c-sv-cpu'), cpuPct.toFixed(1) + '%'); COL(EL('c-sf-cpu'), cpuPct); }

@@ -24,6 +24,7 @@ pwsh -File .\pcmon.ps1
 .\pcmon.ps1 -NoOpen      # API-only mode, no browser auto-open
 .\pcmon.ps1 -ApiOnly     # same as -NoOpen
 .\pcmon.ps1 -Debug       # enable verbose debug logging
+.\pcmon.ps1 -Port 8080   # use a specific local port
 .\pcmon.ps1 -Tray        # system tray mode (runs in background)
 .\pcmon.ps1 -Wallpaper   # live wallpaper mode
 .\pcmon.ps1 -Help        # show all options
@@ -48,14 +49,15 @@ pwsh -File .\pcmon.ps1
 - **WebSocket** — fastest, persistent two-way connection
 - **SSE** — Server-Sent Events, real-time push
 - **HTTP Polling** — fallback with configurable refresh rate
-- **Fast Metrics** — ~500ms updates for key metrics via WebSocket/SSE
+- **Fast Metrics** — summary-only ~500ms updates for key cards, trends, timestamps, and sparklines
+- **Stable Tables** — process, drive, service, group, startup, network, and static sections keep their last full payload until a fresh full payload arrives
 
 ### Process Actions
 - **Kill** — terminate a process (with confirmation)
 - **Suspend** — pause a process
 - **Resume** — resume a suspended process
 
-Protected system processes cannot be terminated.
+Process actions require `X-PCMON-Confirm: 1`, and protected system processes cannot be killed, suspended, or resumed through pcmon.
 
 ### Snapshots
 - Save labeled snapshots of system state
@@ -73,6 +75,7 @@ Real-time diagnostic insights:
 - Non-paged pool (driver leak detection)
 - Browser/Electron/Dev tool overhead
 - Disk bottlenecks
+- Collector state clarity for stale, missing, unsupported, warming, and transiently unavailable subsystems
 
 ### Alert Thresholds
 Customizable thresholds for:
@@ -99,8 +102,10 @@ Customizable thresholds for:
 | `/api/snapshots/{id}/compare` | POST | Compare snapshot |
 | `/api/snapshots/{id}/export` | GET | Export JSON |
 | `/api/snapshots/{id}/export.csv` | GET | Export CSV |
+| `/api/snapshots/{id}` | DELETE | Delete snapshot |
 | `/api/config` | GET/POST | Alert thresholds |
 | `/api/refresh-rate` | POST | Set refresh rate (ms) |
+| `/api/export` | GET | Export current live data as JSON |
 | `/api/report` | GET | Printable report |
 | `/api/report/download` | GET | Download report |
 | `/health` | GET | Server health status |
@@ -114,7 +119,7 @@ Customizable thresholds for:
 ```
 pcmon/
 ├── pcmon.ps1           # built executable — run this
-├── web/dist/
+├── dist/
 │   └── index.html      # built dashboard (CSS+JS inlined)
 ├── src/
 │   ├── build.ps1       # build script — run this to rebuild
@@ -146,24 +151,28 @@ pcmon/
 
 ### Source & Build
 - Source code lives in `src/`
-- Run `.\src\build.ps1` to build `pcmon.ps1` and `web/dist/index.html`
-- `web/dist/` is gitignored — build before shipping or distribution
-- `pcmon.ps1` serves `web/dist/index.html` if built, falls back to `src/web/index.html` + `src/web/src/*` for development
+- Run `.\src\build.ps1` to build `pcmon.ps1` and `dist/index.html`
+- `pcmon.ps1` and `dist/index.html` are generated build outputs and are committed
+- Edit `src/backend/*` and `src/web/*` first, then rebuild; do not hand-edit generated output as source of truth
+- The build inlines `src/web/dashboard.css` and `src/web/src/*.js` into `dist/index.html`
 
 ### Background Data Collection
 - Separate PowerShell process collects data continuously
-- Writes to temp JSON cache file every ~3.5s
+- Writes to a port-scoped temp JSON cache file every configured refresh cycle
 - Main server reads from cache for fast response
-- Falls back to synchronous collection if background fails
+- `/health` stays cheap and does not wait for collector warmup
+- `/data` returns a warming payload while first data is loading, uses last good cache when available, and only falls back to synchronous collection after warmup has had time to publish
+- Full payloads include `collection_state`, `cache_age_ms`, `subsystems`, and optional `errors_recent`
 
 ### Real-Time Stream (`/stream`)
-- **WebSocket** — Try first via `AcceptWebSocketAsync`. Broadcasts full data every ~500ms when clients connected
-- **SSE** — Falls back to Server-Sent Events. Sends full data every ~500ms
-- **Fast Metrics** — Separate timer sends lightweight metrics (RAM, CPU, commit, disk) for near real-time updates
+- **WebSocket** — Try first via `AcceptWebSocketAsync`. Broadcasts full cached payloads every ~500ms when clients are connected
+- **SSE** — Falls back to Server-Sent Events with localhost-only CORS rules
+- **Fast Metrics** — Separate timer sends lightweight `_fast` packets for RAM, CPU, commit, disk, timestamps, trends, and sparklines
 - **HTTP Polling** — Last resort fallback to `/data` endpoint with configurable interval
+- `_fast` packets never replace tables, groups, startup items, services, drives, adapters, or process inventories
 
 ### Refresh Rate
-- Configurable from Settings tab (500ms - 30s)
+- Configurable from Settings tab (500ms - 10s)
 - Default: 500 ms
 - Minimum: 500 ms enforced server-side
 
@@ -184,11 +193,13 @@ pcmon/
 ## Security
 
 - Process actions require confirmation header (`X-PCMON-Confirm: 1`)
-- Protected system processes cannot be terminated
-- Input validation on all API endpoints
+- Protected system processes cannot be killed, suspended, or resumed
+- Input and method validation on API endpoints
+- Snapshot IDs are validated before lookup, compare, export, or delete
+- SSE uses the same localhost-only origin rule as the rest of the local API
 - No shell-string execution
 - XSS protection in dashboard (uses `esc()` function)
-- All user data escaped before innerHTML
+- Printable report values are HTML-escaped before interpolation
 
 ## License
 

@@ -8,7 +8,9 @@ param(
     [switch]$Wallpaper,
     [switch]$Tray,
     [switch]$Debug,
-    [switch]$Help
+    [switch]$Help,
+    [ValidateRange(1, 65535)]
+    [int]$Port = 9876
 )
 
 if ($Help) {
@@ -44,16 +46,36 @@ if ($Wallpaper -and -not $Tray) {
 $ErrorActionPreference = "Continue"
 $script:ErrorCount = 0
 $HOSTNAME = "localhost"
-$Port = 9876
 $OPEN_BROWSER = -not ($NoOpen -or $ApiOnly)
+if ($Port -gt 65535) { $Port = 65535 }
+# Auto-bump the listener port when the requested one is already occupied.
+$listenerProbeSucceeded = $false
 for ($i = 0; $i -lt 20; $i++) {
-    $test = New-Object System.Net.HttpListener
-    $test.Prefixes.Add("http://${HOSTNAME}:$Port/")
-    try { $test.Start(); $test.Stop(); break } catch { $Port++; $test.Abort() }
+    $test = $null
+    try {
+        $test = New-Object System.Net.HttpListener
+        $test.Prefixes.Add("http://${HOSTNAME}:$Port/")
+        $test.Start()
+        $test.Stop()
+        $listenerProbeSucceeded = $true
+        break
+    } catch {
+        if ($null -eq $test) {
+            Write-Host "[pcmon] HttpListener is not available in this PowerShell host: $($_.Exception.Message)" -ForegroundColor Red
+            exit 1
+        }
+        $Port++
+        try { $test.Abort() } catch { Write-Host "[pcmon] Warning: listener probe cleanup failed: $($_.Exception.Message)" -ForegroundColor Yellow }
+    }
+}
+if (-not $listenerProbeSucceeded) {
+    Write-Host "[pcmon] Unable to reserve a local listener port starting from $($Port - 20)." -ForegroundColor Red
+    exit 1
 }
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WEB_DIR = Join-Path $SCRIPT_DIR "web"
-$LOG_FILE = Join-Path $env:TEMP "pcmon_errors.log"
+$DIST_DIR = Join-Path $SCRIPT_DIR "dist"
+$LOG_FILE = Join-Path $env:TEMP "pcmon_errors_$Port.log"
 
 $script:StartTime = Get-Date
 $script:CachedStatic = $null
@@ -70,19 +92,34 @@ $script:ConnectionMethod = "polling"
 $script:WSClients = [System.Collections.Generic.List[object]]::new()
 $script:WSLastSend = [DateTime]::MinValue
 $script:WSBroadcastInterval = 500
+# Session peaks are tracked in memory so the dashboard can show honest "max seen"
+# values without persisting machine state to disk.
+$script:SessionMaxCpuMhz = 0
+$script:SessionMaxCpuTempC = $null
+$script:SessionMaxCpuPowerW = $null
 $SNAPSHOTS_DIR = Join-Path $SCRIPT_DIR "snapshots"
 if (-not (Test-Path $SNAPSHOTS_DIR)) { New-Item -ItemType Directory -Path $SNAPSHOTS_DIR -Force | Out-Null }
-$cacheFile = Join-Path $env:TEMP "pcmon_live_cache.json"
+# Cache and log files are port-scoped so multiple local pcmon instances do not
+# overwrite each other's state.
+$cacheFile = Join-Path $env:TEMP "pcmon_live_cache_$Port.json"
 
 $PROTECTED_PROCESSES = @('System', 'Idle', 'csrss', 'smss', 'wininit', 'services', 'lsass', 'svchost', 'winlogon', 'dwm', 'explorer', 'taskhostw', 'sihost', 'ctfmon', 'fontdrvhost', 'Memory Compression')
+$PROCESS_GROUPS = @{
+    browser = @('msedge', 'arc', 'chrome', 'opera', 'brave', 'firefox', 'electron', 'librewolf')
+    dev_tools = @('node', 'bun', 'python', 'java', 'code', 'webstorm', 'rider', 'idea', 'pycharm', 'goland', 'datagrip', 'phpstorm', 'ruby', 'rust', 'cargo', 'opencode', 'codex', 'chatgpt', 'pieces', 'os-server')
+    security = @('msmpeng', 'malware', 'mbam', 'glasswire', 'portmaster', 'defender', 'avast', 'kaspersky', 'bitdefender', 'eset')
+}
 
 $script:AlertThresholds = @{
     ram_pct = 85
+    cpu_pct = 90
     commit_pct = 80
     pages_sec = 1000
     non_paged_mb = 1500
     disk_pct = 90
-    cpu_pct = 90
+    gpu_pct = 90
+    net_sent_kb = 50000
+    net_recv_kb = 50000
 }
 
 $configPath = Join-Path $SCRIPT_DIR "config.json"
@@ -92,7 +129,7 @@ if (Test-Path $configPath) {
         foreach ($key in $saved.PSObject.Properties.Name) {
             $script:AlertThresholds[$key] = $saved.$key
         }
-    } catch { }
+    } catch { Write-Host "[pcmon] Warning: config load failed: $($_.Exception.Message)" -ForegroundColor Yellow }
 }
 #endregion
 
@@ -103,7 +140,11 @@ function Write-Log {
     $entry = "[$ts] [$Level] $Message"
     if ($Level -ne "DEBUG" -or $script:DebugMode) { $script:Errors += $entry }
     if ($script:Errors.Count -gt 100) { $script:Errors = @($script:Errors | Select-Object -Last 100) }
-    $entry | Out-File -FilePath $LOG_FILE -Append -Encoding UTF8
+    try {
+        $entry | Out-File -FilePath $LOG_FILE -Append -Encoding UTF8 -ErrorAction Stop
+    } catch {
+        if ($script:DebugMode) { Write-Host "[pcmon] log write failed: $($_.Exception.Message)" -ForegroundColor DarkGray }
+    }
 }
 
 function Write-Err {
@@ -113,6 +154,23 @@ function Write-Err {
 #endregion
 
 # -- 02-http-helpers --
+function Broadcast-WebSocketData {
+    param([object]$Data)
+    if ($script:WSClients.Count -eq 0) { return }
+    $json = $null
+    try { $json = $Data | ConvertTo-Json -Compress -Depth 20 } catch { Write-Log "WebSocket serialization failed: $($_.Exception.Message)" "DEBUG"; return }
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+    foreach ($ws in @($script:WSClients)) {
+        try {
+            if ($ws.State -eq 'Open') {
+                $null = $ws.SendAsync([ArraySegment[byte]]$bytes, 'Text', $true, [System.Threading.CancellationToken]::None)
+            }
+        } catch {
+            Write-Log "WebSocket send failed: $($_.Exception.Message)" "DEBUG"
+        }
+    }
+}
+
 function Send-Response($response, $data, $type = "application/json", $contentDisposition = $null) {
     try {
         if ($null -ne $contentDisposition -and $contentDisposition -ne "") {
@@ -130,8 +188,27 @@ function Send-Response($response, $data, $type = "application/json", $contentDis
                 $response.OutputStream.Write($bytes, 0, $bytes.Length)
             }
         }
-    } catch {}
-    try { $response.Close() } catch {}
+    } catch {
+        Write-Log "HTTP response write failed: $($_.Exception.Message)" "DEBUG"
+    }
+    try { $response.Close() } catch { Write-Log "HTTP response close failed: $($_.Exception.Message)" "DEBUG" }
+}
+
+function Send-JsonObject($response, $obj, [int]$StatusCode = 200) {
+    $response.StatusCode = $StatusCode
+    $json = $obj | ConvertTo-Json -Depth 20 -Compress
+    $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
+    Send-Response $response $buffer "application/json"
+}
+
+function Send-JsonError($response, [int]$StatusCode, [string]$Message) {
+    Send-JsonObject $response @{ success = $false; error = $Message; status = $StatusCode } $StatusCode
+}
+
+function ConvertTo-HtmlEscaped {
+    param([object]$Value)
+    if ($null -eq $Value) { return "" }
+    return [System.Net.WebUtility]::HtmlEncode([string]$Value)
 }
 
 # -- 03-actions --
@@ -146,7 +223,7 @@ function Stop-ProcessById {
         Stop-Process -Id $ProcessId -Force:$Force -ErrorAction Stop
         return @{ success = $true; message = "Process $($proc.ProcessName) terminated" }
     } catch {
-        return @{ success = $false; error = "Operation failed" }
+        return @{ success = $false; error = "Failed to terminate: $($_.Exception.Message)" }
     }
 }
 
@@ -159,7 +236,7 @@ function Suspend-ProcessById {
         $proc.Suspend()
         return @{ success = $true; message = "Process $($proc.ProcessName) suspended" }
     } catch {
-        return @{ success = $false; error = "Operation failed" }
+        return @{ success = $false; error = "Failed to suspend: $($_.Exception.Message)" }
     }
 }
 
@@ -167,11 +244,12 @@ function Resume-ProcessById {
     param([int]$ProcessId)
     $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
     if (-not $proc) { return @{ success = $false; error = "Process not found" } }
+    if ($PROTECTED_PROCESSES -contains $proc.ProcessName) { return @{ success = $false; error = "Cannot resume protected system process" } }
     try {
         $proc.Resume()
         return @{ success = $true; message = "Process $($proc.ProcessName) resumed" }
     } catch {
-        return @{ success = $false; error = "Operation failed" }
+        return @{ success = $false; error = "Failed to resume: $($_.Exception.Message)" }
     }
 }
 
@@ -216,10 +294,23 @@ function Save-Snapshot {
     return @{ id = $timestamp; ts = $snapshot.ts; label = $Label; filename = $filename }
 }
 
+function Test-SnapshotId {
+    param([string]$Id)
+    return ($Id -match '^\d{8}_\d{6}$')
+}
+
+function Get-SnapshotFileById {
+    param([string]$Id)
+    if (-not (Test-SnapshotId -Id $Id)) { return $null }
+    return Get-SnapshotFiles | Where-Object { $_.BaseName -eq "snapshot_$Id" } | Select-Object -First 1
+}
+
 function Compare-Snapshots {
     param([string]$SnapshotId)
-    $files = Get-SnapshotFiles
-    $snapshotFile = $files | Where-Object { $_.BaseName -eq "snapshot_$SnapshotId" } | Select-Object -First 1
+    if (-not (Test-SnapshotId -Id $SnapshotId)) {
+        return @{ error = "Invalid snapshot ID" }
+    }
+    $snapshotFile = Get-SnapshotFileById -Id $SnapshotId
     if (-not $snapshotFile) { return @{ error = "Snapshot not found" } }
     $snapshot = Get-Content $snapshotFile.FullName | ConvertFrom-Json
     if (Test-Path $cacheFile) {
@@ -274,7 +365,7 @@ function Compare-Snapshots {
         }
     }
     $snapProcs = @{}
-    foreach ($p in $snapshotData.top_ram) { $snapProcs[$p.name] = $p }
+    foreach ($p in $snapshot.top_ram) { $snapProcs[$p.name] = $p }
     $currProcs = @{}
     foreach ($p in $currentData.top_ram) { $currProcs[$p.name] = $p }
     $newProcs = @($currProcs.Keys | Where-Object { -not $snapProcs.ContainsKey($_) })
@@ -341,20 +432,54 @@ function Compare-Snapshots {
 function Get-CachedStaticData {
     $now = Get-Date
     if ($script:StaticCacheExpiry -gt $now) { return }
-    $drives = @(Get-CimInstance Win32_LogicalDisk -Property DeviceID, VolumeName, FileSystem, Size, FreeSpace -ErrorAction SilentlyContinue | Where-Object { $_.DriveType -eq 3 })
+    $previous = $script:CachedStatic
+    $drives = @(Get-CimInstance Win32_LogicalDisk -Property DeviceID, VolumeName, FileSystem, Size, FreeSpace, DriveType -ErrorAction SilentlyContinue | Where-Object { $_.DriveType -eq 3 })
     if ($drives.Count -eq 0) {
         try {
             $wmiDrives = @(Get-WmiObject Win32_LogicalDisk -ErrorAction SilentlyContinue | Where-Object { $_.DriveType -eq 3 })
             if ($wmiDrives.Count -gt 0) { $drives = $wmiDrives }
-        } catch {}
+        } catch { Write-Log "Drive fallback collection failed: $($_.Exception.Message)" "DEBUG" }
     }
+    if ($drives.Count -eq 0 -and $previous -and $previous.Drives) { $drives = $previous.Drives }
+    $services = @(Get-CimInstance Win32_Service -Property Name, DisplayName, State, StartMode, ProcessId -ErrorAction SilentlyContinue)
+    if ($services.Count -eq 0 -and $previous -and $previous.Services) { $services = $previous.Services }
+    $startup = @(Get-CimInstance Win32_StartupCommand -Property Name, Command, Location, User -ErrorAction SilentlyContinue)
+    if ($startup.Count -eq 0 -and $previous -and $previous.Startup) { $startup = $previous.Startup }
+    $video = @(Get-CimInstance Win32_VideoController -Property Name, AdapterRAM, Status -ErrorAction SilentlyContinue)
+    if ($video.Count -eq 0 -and $previous -and $previous.Video) { $video = $previous.Video }
+    $cpu = @(Get-CimInstance Win32_Processor -Property Name, NumberOfCores, NumberOfLogicalProcessors, MaxClockSpeed, CurrentClockSpeed, SocketDesignation, Status -ErrorAction SilentlyContinue)
+    if ($cpu.Count -eq 0 -and $previous -and $previous.CPU) { $cpu = $previous.CPU }
+    $netAdapters = @(try { Get-NetAdapter -Physical -ErrorAction Stop | Select-Object Name, InterfaceDescription, Status, LinkSpeed, MediaType, PhysicalMediaType, MacAddress } catch { Write-Log "Network adapter collection failed: $($_.Exception.Message)" "DEBUG"; @() })
+    if ($netAdapters.Count -eq 0 -and $previous -and $previous.NetAdapters) { $netAdapters = $previous.NetAdapters }
     $script:CachedStatic = @{
         Drives = $drives
-        Services = @(Get-CimInstance Win32_Service -Property Name, DisplayName, State, StartMode, ProcessId -ErrorAction SilentlyContinue)
-        Startup = @(Get-CimInstance Win32_StartupCommand -Property Name, Command, Location, User -ErrorAction SilentlyContinue)
-        OS = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
-        Video = @(Get-CimInstance Win32_VideoController -Property Name, AdapterRAM, Status -ErrorAction SilentlyContinue)
+        Services = $services
+        Startup = $startup
+        OS = if ($previous -and $previous.OS) { Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue | ForEach-Object { $_ } } else { Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue }
+        Video = $video
+        CPU = $cpu
+        NetAdapters = $netAdapters
+        PageFile = @()
+        PSProfiles = @()
     }
+    if (-not $script:CachedStatic.OS -and $previous -and $previous.OS) { $script:CachedStatic.OS = $previous.OS }
+    try {
+        foreach ($pf in @(Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue)) {
+            $script:CachedStatic.PageFile += [PSCustomObject]@{ name = $pf.Name; allocated_mb = $pf.AllocatedBaseSize; current_usage_mb = $pf.CurrentUsage; peak_usage_mb = $pf.PeakUsage }
+        }
+    } catch { Write-Log "Page file collection failed: $($_.Exception.Message)" "DEBUG" }
+    if ($script:CachedStatic.PageFile.Count -eq 0 -and $previous -and $previous.PageFile) { $script:CachedStatic.PageFile = $previous.PageFile }
+    try {
+        $profilePaths = @($PROFILE.AllUsersAllHosts, $PROFILE.AllUsersCurrentHost, $PROFILE.CurrentUserAllHosts, $PROFILE.CurrentUserCurrentHost)
+        foreach ($pp in $profilePaths) {
+            if ($pp) {
+                $exists = Test-Path $pp -ErrorAction SilentlyContinue
+                $sizeKb = if ($exists) { try { [math]::Round((Get-Item $pp).Length / 1KB, 1) } catch { Write-Log "Profile size read failed for $pp`: $($_.Exception.Message)" "DEBUG"; $null } } else { $null }
+                $script:CachedStatic.PSProfiles += [PSCustomObject]@{ path = $pp; exists = $exists; size_kb = $sizeKb }
+            }
+        }
+    } catch { Write-Log "PowerShell profile collection failed: $($_.Exception.Message)" "DEBUG" }
+    if ($script:CachedStatic.PSProfiles.Count -eq 0 -and $previous -and $previous.PSProfiles) { $script:CachedStatic.PSProfiles = $previous.PSProfiles }
     $script:StaticCacheExpiry = $now.AddSeconds(60)
 }
 
@@ -362,31 +487,96 @@ function Get-CachedCommandLines {
     $now = Get-Date
     if ($script:ProcessCacheTime -gt $now.AddSeconds(-5)) { return }
     $script:ProcessCacheTime = $now
+    $script:CommandLines = @{}
     $cmds = Get-CimInstance Win32_Process -Property ProcessId, CommandLine, ExecutablePath -ErrorAction SilentlyContinue
     foreach ($c in $cmds) {
         $script:CommandLines[$c.ProcessId] = @{ cmd = $c.CommandLine; exe_path = $c.ExecutablePath }
     }
 }
 
+function Test-ProcessNameInGroup {
+    param([string]$Name, [string]$Group)
+    if ([string]::IsNullOrWhiteSpace($Name) -or -not $PROCESS_GROUPS.ContainsKey($Group)) { return $false }
+    return ($PROCESS_GROUPS[$Group] -contains $Name.ToLowerInvariant())
+}
+
+function Get-CounterSampleValue {
+    param(
+        [array]$Samples,
+        [string]$Pattern,
+        [switch]$Sum
+    )
+    $matches = @($Samples | Where-Object { $_.Path -like "*$Pattern*" })
+    if ($matches.Count -eq 0) { return 0 }
+    if ($Sum) {
+        return [double](($matches | Measure-Object CookedValue -Sum).Sum)
+    }
+    return [double]$matches[0].CookedValue
+}
+
+# Convert Windows link-speed strings such as "260 Mbps" into a sortable numeric
+# value so the UI can pick a stable primary adapter.
+function Get-LinkSpeedBps {
+    param([string]$LinkSpeed)
+    if ([string]::IsNullOrWhiteSpace($LinkSpeed)) { return 0 }
+    if ($LinkSpeed -match '([\d\.]+)\s*(Kbps|Mbps|Gbps|Tbps|bps)') {
+        $value = [double]$matches[1]
+        switch ($matches[2].ToLowerInvariant()) {
+            'tbps' { return [double]($value * 1TB) }
+            'gbps' { return [double]($value * 1GB) }
+            'mbps' { return [double]($value * 1MB) }
+            'kbps' { return [double]($value * 1KB) }
+            default { return $value }
+        }
+    }
+    return 0
+}
+
+# Normalize adapter families into coarse types that are easy to read in the UI.
+function Get-AdapterKind {
+    param($Adapter)
+    $joined = @(
+        [string]$Adapter.Name,
+        [string]$Adapter.InterfaceDescription,
+        [string]$Adapter.MediaType,
+        [string]$Adapter.PhysicalMediaType
+    ) -join ' '
+    if ($joined -match 'wi-?fi|wireless|802\.11') { return 'Wi-Fi' }
+    if ($joined -match 'ethernet|802\.3') { return 'Ethernet' }
+    return 'Other'
+}
+
 function Get-LiveData {
     $now = Get-Date
     $cacheAge = ($now - $script:LiveCacheTime).TotalSeconds
-    if ($cacheAge -lt 5 -and $null -ne $script:LiveDataCache) {
+    # Keep HTTP polling responsive by returning very recent in-memory samples
+    # instead of re-collecting on every request.
+    if ($cacheAge -lt 0.9 -and $null -ne $script:LiveDataCache) {
         return $script:LiveDataCache
     }
     if (Test-Path $cacheFile) {
         try {
             $fi = Get-Item $cacheFile -ErrorAction SilentlyContinue
-            if ($fi -and ($now - $fi.LastWriteTime).TotalSeconds -lt 5) {
+            if ($fi) {
                 $script:LiveDataCache = Get-Content $cacheFile -Raw | ConvertFrom-Json
                 $script:LiveCacheTime = $now
-                return $script:LiveDataCache
+                if (($now - $fi.LastWriteTime).TotalSeconds -lt 15) {
+                    return $script:LiveDataCache
+                }
             }
-        } catch {}
+        } catch { Write-Log "Cache file read failed: $($_.Exception.Message)" "DEBUG" }
     }
-    $script:LiveDataCache = _CollectLiveData
-    $script:LiveCacheTime = $now
-    return $script:LiveDataCache
+    if ($script:LiveDataCollectionStatus -eq "busy" -and $null -ne $script:LiveDataCache) {
+        return $script:LiveDataCache
+    }
+    $script:LiveDataCollectionStatus = "busy"
+    try {
+        $script:LiveDataCache = _CollectLiveData
+        $script:LiveCacheTime = $now
+        return $script:LiveDataCache
+    } finally {
+        $script:LiveDataCollectionStatus = "idle"
+    }
 }
 
 function _CollectLiveData {
@@ -396,37 +586,29 @@ function _CollectLiveData {
 
     $samples = @()
     try {
-        $systemCounters = Get-Counter '\Memory\Available MBytes','\Memory\Committed Bytes','\Memory\Commit Limit','\Memory\Pool Paged Bytes','\Memory\Pool Nonpaged Bytes','\Memory\Pages/sec','\Memory\Page Reads/sec','\Processor(_Total)\% Processor Time','\System\Processor Queue Length','\PhysicalDisk(_Total)\% Disk Time','\PhysicalDisk(_Total)\Avg. Disk Queue Length','\PhysicalDisk(_Total)\Disk Read Bytes/sec','\PhysicalDisk(_Total)\Disk Write Bytes/sec','\Network Interface(*)\Bytes Sent/sec','\Network Interface(*)\Bytes Received/sec' -ErrorAction SilentlyContinue
+        $systemCounters = Get-Counter '\Memory\Available MBytes','\Memory\Committed Bytes','\Memory\Commit Limit','\Memory\Pool Paged Bytes','\Memory\Pool Nonpaged Bytes','\Memory\Pages/sec','\Memory\Page Reads/sec','\Processor(_Total)\% Processor Time','\Processor Information(_Total)\Processor Frequency','\Processor Information(_Total)\% Processor Performance','\System\Processor Queue Length','\PhysicalDisk(_Total)\% Disk Time','\PhysicalDisk(_Total)\Avg. Disk Queue Length','\PhysicalDisk(_Total)\Disk Read Bytes/sec','\PhysicalDisk(_Total)\Disk Write Bytes/sec','\Network Interface(*)\Bytes Sent/sec','\Network Interface(*)\Bytes Received/sec' -ErrorAction SilentlyContinue
 
         $gpuCounters = Get-Counter '\GPU Engine(*)\Utilization Percentage' -ErrorAction SilentlyContinue
         $samples = @()
         if ($systemCounters) { $samples += $systemCounters.CounterSamples }
         if ($gpuCounters) { $samples += $gpuCounters.CounterSamples }
-    } catch {}
+    } catch { Write-Log "Counter collection failed: $($_.Exception.Message)" "DEBUG" }
 
-    $t0 = [DateTime]::UtcNow.Ticks
-    $os = if ($cs.OS) { $cs.OS } else { try { Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue } catch {} }
-    $s = @{}
-    foreach ($sm in $samples) {
-        $idx = $sm.Path.IndexOf("\", 2)
-        $clean = $sm.Path.Substring($idx).ToUpperInvariant()
-        $s[$clean] = $sm.CookedValue
-    }
+    $os = if ($cs.OS) { $cs.OS } else { try { Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue } catch { Write-Log "OS metadata collection failed: $($_.Exception.Message)" "DEBUG"; $null } }
+    $cpuMeta = if ($cs.CPU) { @($cs.CPU) } else { @() }
 
     $totalRAMMB = if ($os) { [math]::Round($os.TotalVisibleMemorySize / 1024, 0) } else { 0 }
-    $memAvailMB = [math]::Round([double]$s['\MEMORY\AVAILABLE MBYTES'], 2)
+    $memAvailMB = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\memory\available mbytes'), 2)
     $usedRAMMB = $totalRAMMB - $memAvailMB
     $ramPct = if ($totalRAMMB -gt 0) { [math]::Round(($usedRAMMB / $totalRAMMB) * 100, 1) } else { 0 }
-    $commitBytes = [double]$s['\MEMORY\COMMITTED BYTES']
-    $commitLimitBytes = [double]$s['\MEMORY\COMMIT LIMIT']
+    $commitBytes = Get-CounterSampleValue -Samples $samples -Pattern '\memory\committed bytes'
+    $commitLimitBytes = Get-CounterSampleValue -Samples $samples -Pattern '\memory\commit limit'
     $commitPct = if ($commitLimitBytes -gt 0) { [math]::Round(($commitBytes / $commitLimitBytes) * 100, 1) } else { 0 }
-    $cpuPct = [math]::Round([double]$s['\PROCESSOR(_TOTAL)\% PROCESSOR TIME'], 1)
+    $cpuPct = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\processor(_total)\% processor time'), 1)
+    $diskPct = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\physicaldisk(_total)\% disk time'), 1)
 
-    $netSentKB = 0.0; $netRecvKB = 0.0
-    foreach ($k in $s.Keys) {
-        if ($k -like '*BYTES SENT*') { $netSentKB += $s[$k] }
-        elseif ($k -like '*BYTES RECEIVED*') { $netRecvKB += $s[$k] }
-    }
+    $netSentKB = Get-CounterSampleValue -Samples $samples -Pattern 'bytes sent/sec' -Sum
+    $netRecvKB = Get-CounterSampleValue -Samples $samples -Pattern 'bytes received/sec' -Sum
 
     Get-CachedCommandLines
     $processes = @()
@@ -443,7 +625,7 @@ function _CollectLiveData {
                 command_line = if ($extra) { $extra.cmd } else { $null }
             }
         })
-    } catch { $processes = @() }
+    } catch { Write-Log "Process collection failed: $($_.Exception.Message)" "DEBUG"; $processes = @() }
 
     $by_ram = @($processes | Sort-Object ws_mb -Descending | Select-Object -First 30)
     $by_private = @($processes | Sort-Object private_mb -Descending | Select-Object -First 30)
@@ -452,57 +634,122 @@ function _CollectLiveData {
     $browserGroup = @{ ws_mb = 0.0; count = 0 }
     $devGroup = @{ ws_mb = 0.0; count = 0 }
     $secGroup = @{ ws_mb = 0.0; count = 0 }
-    $browserPattern = 'msedge|arc|chrome|opera|brave|firefox|electron|librewolf'
-    $devPattern = 'node|bun|python|java|code|webstorm|rider|idea|pycharm|goland|datagrip|phpstorm|ruby|rust|cargo|opencode|codex|chatgpt|pieces|os-server'
-    $secPattern = 'msmpeng|malware|mbam|glasswire|portmaster|defender|avast|kaspersky|bitdefender|eset'
     foreach ($p in $processes) {
         $n = $p.name.ToLowerInvariant()
-        if ($n -match $browserPattern) { $browserGroup.ws_mb += $p.ws_mb; $browserGroup.count++ }
-        elseif ($n -match $devPattern) { $devGroup.ws_mb += $p.ws_mb; $devGroup.count++ }
-        elseif ($n -match $secPattern) { $secGroup.ws_mb += $p.ws_mb; $secGroup.count++ }
+        if (Test-ProcessNameInGroup -Name $n -Group 'browser') { $browserGroup.ws_mb += $p.ws_mb; $browserGroup.count++ }
+        elseif (Test-ProcessNameInGroup -Name $n -Group 'dev_tools') { $devGroup.ws_mb += $p.ws_mb; $devGroup.count++ }
+        elseif (Test-ProcessNameInGroup -Name $n -Group 'security') { $secGroup.ws_mb += $p.ws_mb; $secGroup.count++ }
     }
     $browserGroup.ws_mb = [math]::Round($browserGroup.ws_mb, 1)
     $devGroup.ws_mb = [math]::Round($devGroup.ws_mb, 1)
     $secGroup.ws_mb = [math]::Round($secGroup.ws_mb, 1)
 
     $adapters = if ($cs.Video) { $cs.Video } else { @() }
-    $gpuResult = @{ available = $false; adapters = @(); eng_type_totals = @{ '3d' = 0; 'videodecode' = 0; 'videoprocessing' = 0; 'copy' = 0; 'videoencode' = 0; 'security' = 0; 'vr' = 0; 'other' = 0 }; dedicated_used_gb = 0; dedicated_total_gb = 0 }
+    # "available" means an adapter exists. Engine telemetry is tracked separately
+    # so we can distinguish unsupported counters from a real 0% workload.
+    $gpuResult = @{ available = $false; adapters = @(); eng_type_totals = @{ '3d' = 0; 'videodecode' = 0; 'videoprocessing' = 0; 'copy' = 0; 'videoencode' = 0; 'security' = 0; 'vr' = 0; 'other' = 0 }; dedicated_used_gb = 0; dedicated_total_gb = 0; engines_supported = $false; status_text = 'No GPU adapters detected' }
     foreach ($adapter in $adapters) {
         $totalGB = if ($adapter.AdapterRAM -and $adapter.AdapterRAM -gt 0) { [math]::Round($adapter.AdapterRAM / 1GB, 1) } else { 0 }
-        $gpuResult.adapters += @{ name = $adapter.Name; status = $adapter.Status; dedicated_gb = 0; total_gb = $totalGB; pct = 0 }
+        $gpuResult.adapters += @{ name = $adapter.Name; status = $adapter.Status; dedicated_gb = 0; total_gb = $totalGB; pct = 0; telemetry_supported = $false }
         $gpuResult.dedicated_total_gb += $totalGB
     }
     foreach ($sm in $samples) {
         $p = $sm.Path.ToUpperInvariant()
+        if ($p -like '*GPU*ENGINE*UTILIZATION*') { $gpuResult.engines_supported = $true }
         if ($p -like '*GPU*ENG*3D*') { $gpuResult.eng_type_totals['3d'] += $sm.CookedValue }
         elseif ($p -like '*GPU*ENG*VIDEODECODE*') { $gpuResult.eng_type_totals['videodecode'] += $sm.CookedValue }
         elseif ($p -like '*GPU*ENG*VIDEOENCODE*') { $gpuResult.eng_type_totals['videoencode'] += $sm.CookedValue }
     }
     $gpuResult.available = $gpuResult.adapters.Count -gt 0
+    if ($gpuResult.available) {
+        $gpuResult.status_text = if ($gpuResult.engines_supported) { 'Collector active' } else { 'Adapters detected, engine counters unavailable' }
+        foreach ($adapter in $gpuResult.adapters) { $adapter.telemetry_supported = $gpuResult.engines_supported }
+    }
+
+    $netAdapterRows = @()
+    $netAdapters = if ($cs.NetAdapters) { @($cs.NetAdapters) } else { @() }
+    foreach ($adapter in $netAdapters) {
+        $kind = Get-AdapterKind -Adapter $adapter
+        $linkSpeedBps = Get-LinkSpeedBps -LinkSpeed ([string]$adapter.LinkSpeed)
+        $netAdapterRows += [PSCustomObject]@{
+            name = $adapter.Name
+            description = $adapter.InterfaceDescription
+            status = $adapter.Status
+            link_speed = [string]$adapter.LinkSpeed
+            kind = $kind
+            media_type = if ($adapter.PhysicalMediaType) { [string]$adapter.PhysicalMediaType } else { [string]$adapter.MediaType }
+            link_speed_bps = $linkSpeedBps
+        }
+    }
+    $activeNetAdapters = @($netAdapterRows | Where-Object { $_.status -eq 'Up' })
+    # Prefer an active adapter, then fall back to the fastest known physical
+    # adapter so the summary panel stays populated even while disconnected.
+    $primaryNetAdapter = if ($activeNetAdapters.Count -gt 0) {
+        @($activeNetAdapters | Sort-Object link_speed_bps -Descending | Select-Object -First 1)[0]
+    } elseif ($netAdapterRows.Count -gt 0) {
+        @($netAdapterRows | Sort-Object link_speed_bps -Descending | Select-Object -First 1)[0]
+    } else { $null }
+    $network = @{
+        status_text = if ($netAdapterRows.Count -eq 0) { 'No physical adapters detected' } elseif ($activeNetAdapters.Count -eq 0) { 'No active physical adapter' } else { 'Collector active' }
+        busiest_adapter = if ($primaryNetAdapter) { $primaryNetAdapter.name } else { $null }
+        primary_type = if ($primaryNetAdapter) { $primaryNetAdapter.kind } else { 'Unknown' }
+        adapter_count = $netAdapterRows.Count
+        adapters = $netAdapterRows
+    }
 
     $insights = @()
     $memAvailGB = [math]::Round($memAvailMB / 1024, 1)
-    $pagedPoolBytes = [double]$s['\MEMORY\POOL PAGED BYTES']
+    $pagedPoolBytes = Get-CounterSampleValue -Samples $samples -Pattern '\memory\pool paged bytes'
     if ($pagedPoolBytes -le 0 -or [double]::IsNaN($pagedPoolBytes)) {
-        try { $pagedPoolBytes = [double](Get-CimInstance Win32_PerfRawData_PerfOS_Memory -ErrorAction SilentlyContinue).PoolPagedBytes } catch { $pagedPoolBytes = 0 }
+        try { $pagedPoolBytes = [double](Get-CimInstance Win32_PerfRawData_PerfOS_Memory -ErrorAction SilentlyContinue).PoolPagedBytes } catch { Write-Log "Paged pool fallback failed: $($_.Exception.Message)" "DEBUG"; $pagedPoolBytes = 0 }
     }
-    $nonPagedBytes = [double]$s['\MEMORY\POOL NONPAGED BYTES']
+    $nonPagedBytes = Get-CounterSampleValue -Samples $samples -Pattern '\memory\pool nonpaged bytes'
     if ($nonPagedBytes -le 0 -or [double]::IsNaN($nonPagedBytes)) {
-        try { $nonPagedBytes = [double](Get-CimInstance Win32_PerfRawData_PerfOS_Memory -ErrorAction SilentlyContinue).PoolNonpagedBytes } catch { $nonPagedBytes = 0 }
+        try { $nonPagedBytes = [double](Get-CimInstance Win32_PerfRawData_PerfOS_Memory -ErrorAction SilentlyContinue).PoolNonpagedBytes } catch { Write-Log "Non-paged pool fallback failed: $($_.Exception.Message)" "DEBUG"; $nonPagedBytes = 0 }
     }
     $pagedPoolMB = [math]::Round($pagedPoolBytes / 1MB, 2)
     $pagedPoolPct = if ($totalRAMMB -gt 0) { [math]::Round($pagedPoolMB / $totalRAMMB * 100, 1) } else { 0 }
     $nonPagedMB = [math]::Round($nonPagedBytes / 1MB, 0)
     $nonPagedPct = if ($totalRAMMB -gt 0) { [math]::Round($nonPagedMB / $totalRAMMB * 100, 1) } else { 0 }
+    $cpuCurrentMhz = 0
+    $cpuBaseMhz = 0
+    $cpuPerfPct = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\processor information(_total)\% processor performance'), 1)
+    $cpuFreqCounterMhz = [int][math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\processor information(_total)\processor frequency'), 0)
+    $cpuName = 'Unknown CPU'
+    $cpuSockets = @($cpuMeta).Count
+    $cpuCores = 0
+    $cpuLogical = 0
+    if ($cpuMeta.Count -gt 0) {
+        $cpuName = $cpuMeta[0].Name
+        $cpuBaseMhz = [int]($cpuMeta[0].MaxClockSpeed)
+        $cpuCurrentMhz = [int]($cpuMeta[0].CurrentClockSpeed)
+        foreach ($cpu in $cpuMeta) {
+            $cpuCores += [int]($cpu.NumberOfCores)
+            $cpuLogical += [int]($cpu.NumberOfLogicalProcessors)
+        }
+    }
+    if ($cpuFreqCounterMhz -gt 0) {
+        # The Processor Information counter is more truthful than the static CIM
+        # CurrentClockSpeed field, so use it when Windows exposes it.
+        $cpuCurrentMhz = $cpuFreqCounterMhz
+    } elseif ($cpuBaseMhz -gt 0 -and $cpuPerfPct -gt 0) {
+        $cpuCurrentMhz = [int][math]::Round(($cpuBaseMhz * $cpuPerfPct) / 100, 0)
+    }
+    if ($cpuCurrentMhz -gt $script:SessionMaxCpuMhz) { $script:SessionMaxCpuMhz = $cpuCurrentMhz }
     if ($memAvailMB -lt 1024) { $insights += "CRITICAL: Less than 1GB RAM available ($memAvailGB GB)." }
     elseif ($memAvailMB -lt 2048) { $insights += "Low available RAM ($memAvailGB GB)." }
     if ($commitPct -ge 90) { $insights += "Commit charge > 90%." }
-    if ([double]$s['\MEMORY\PAGES/SEC'] -ge 1000) { $insights += "Heavy paging." }
+    if ((Get-CounterSampleValue -Samples $samples -Pattern '\memory\pages/sec') -ge 1000) { $insights += "Heavy paging." }
     if ($nonPagedMB -ge 1500) { $insights += "Non-paged pool high ($nonPagedMB MB)." }
     if ($cpuPct -ge 90) { $insights += "CPU at ${cpuPct}%." }
+    if ($cpuPct -ge 80 -and $commitPct -lt 80 -and ($diskPct -lt 70)) { $insights += "CPU pressure is likely the current bottleneck." }
+    if ($commitPct -ge 85 -and (Get-CounterSampleValue -Samples $samples -Pattern '\memory\pages/sec') -ge 500) { $insights += "High memory pressure with active paging." }
+    if ($diskPct -ge 85 -or (Get-CounterSampleValue -Samples $samples -Pattern '\physicaldisk(_total)\avg. disk queue length') -ge 2) { $insights += "Storage bottleneck likely." }
     if ($browserGroup.count -gt 0 -and $browserGroup.ws_mb -gt 2000) { $insights += "Browsers: $($browserGroup.count) procs, ~$($browserGroup.ws_mb) MB." }
     if ($devGroup.count -gt 0 -and $devGroup.ws_mb -gt 1000) { $insights += "Dev tools: $($devGroup.count) procs, ~$($devGroup.ws_mb) MB." }
     if ($secGroup.count -gt 0 -and $secGroup.ws_mb -gt 500) { $insights += "Security: $($secGroup.count) procs, ~$($secGroup.ws_mb) MB." }
+    if ($gpuResult.available -and -not $gpuResult.engines_supported) { $insights += "GPU telemetry partially unsupported on this device." }
+    if ($netAdapterRows.Count -eq 0) { $insights += "No physical network adapters detected." }
     if (-not $insights) { $insights += 'System healthy.' }
 
     $disks = @()
@@ -511,17 +758,14 @@ function _CollectLiveData {
         try {
             $used = $d.Size - $d.FreeSpace; $pct = if ($d.Size -gt 0) { [math]::Round(($used / $d.Size) * 100, 1) } else { 0 }
             $disks += [PSCustomObject]@{ drive = $d.DeviceID; label = $d.VolumeName; fs = $d.FileSystem; total_gb = [math]::Round($d.Size / 1GB, 1); used_gb = [math]::Round($used / 1GB, 1); free_gb = [math]::Round($d.FreeSpace / 1GB, 1); pct = $pct; state = if ($pct -ge 90) { 'bad' } elseif ($pct -ge 80) { 'warn' } else { 'ok' } }
-        } catch {}
+        } catch { Write-Log "Drive row render failed: $($_.Exception.Message)" "DEBUG" }
     }
 
     $pagefile = @()
-    try { foreach ($pf in @(Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue)) { $pagefile += [PSCustomObject]@{ name = $pf.Name; allocated_mb = $pf.AllocatedBaseSize; current_usage_mb = $pf.CurrentUsage; peak_usage_mb = $pf.PeakUsage } } } catch {}
-
+    if ($cs.PageFile) { $pagefile = $cs.PageFile }
+    
     $psProfiles = @()
-    try {
-        $profilePaths = @($PROFILE.AllUsersAllHosts, $PROFILE.AllUsersCurrentHost, $PROFILE.CurrentUserAllHosts, $PROFILE.CurrentUserCurrentHost)
-        foreach ($pp in $profilePaths) { if ($pp) { $exists = Test-Path $pp -ErrorAction SilentlyContinue; $sizeKb = if ($exists) { try { [math]::Round((Get-Item $pp).Length / 1KB, 1) } catch { $null } } else { $null }; $psProfiles += [PSCustomObject]@{ path = $pp; exists = $exists; size_kb = $sizeKb } } }
-    } catch {}
+    if ($cs.PSProfiles) { $psProfiles = $cs.PSProfiles }
 
     $svcByPid = @{}
     $services = if ($cs.Services) { $cs.Services } else { @() }
@@ -536,20 +780,57 @@ function _CollectLiveData {
     $startupItems = if ($cs.Startup) { $cs.Startup } else { @() }
     $osCaption = if ($os) { $os.Caption } else { 'Unknown' }
 
+    $script:cpuTempC = $null
+    $script:cpuTempSupported = $false
+    try {
+        $thermal = Get-CimInstance -ClassName Win32_PerfFormattedData_Counters_ThermalZoneInformation -ErrorAction SilentlyContinue | Where-Object { $_.Name -like '*TZ*' } | Select-Object -First 1
+        if ($null -ne $thermal -and $thermal.Temperature -gt 0) {
+            $script:cpuTempC = [math]::Round($thermal.Temperature / 10.0, 1)
+            $script:cpuTempSupported = $true
+            if ($null -eq $script:SessionMaxCpuTempC -or $script:cpuTempC -gt $script:SessionMaxCpuTempC) { $script:SessionMaxCpuTempC = $script:cpuTempC }
+        }
+        } catch { Write-Log "CPU thermal collection failed: $($_.Exception.Message)" "DEBUG" }
+
     return @{
         ts = (Get-Date -Format 'HH:mm:ss'); hostname = $env:COMPUTERNAME; os_caption = $osCaption; total_procs = $processes.Count; ram_pct = $ramPct
         ram_used_gb = [math]::Round($usedRAMMB / 1024, 2); ram_total_gb = [math]::Round($totalRAMMB / 1024, 2); ram_avail_mb = $memAvailMB
         commit_pct = $commitPct; commit_gb = [math]::Round($commitBytes / 1GB, 2); limit_gb = [math]::Round($commitLimitBytes / 1GB, 2)
         paged_pool_mb = $pagedPoolMB; paged_pool_pct = $pagedPoolPct; non_paged_mb = $nonPagedMB; non_paged_pct = $nonPagedPct
-        pages_sec = [math]::Round([double]$s['\MEMORY\PAGES/SEC'], 2); page_reads_sec = [math]::Round([double]$s['\MEMORY\PAGE READS/SEC'], 2)
-        cpu_pct = $cpuPct; cpu_queue = [math]::Round([double]$s['\SYSTEM\PROCESSOR QUEUE LENGTH'], 2)
-        disk_pct = [math]::Round([double]$s['\PHYSICALDISK(_TOTAL)\% DISK TIME'], 1); disk_queue = [math]::Round([double]$s['\PHYSICALDISK(_TOTAL)\AVG. DISK QUEUE LENGTH'], 2)
-        disk_read_mb = [math]::Round([double]$s['\PHYSICALDISK(_TOTAL)\DISK READ BYTES/SEC'] / 1MB, 2)
-        disk_write_mb = [math]::Round([double]$s['\PHYSICALDISK(_TOTAL)\DISK WRITE BYTES/SEC'] / 1MB, 2)
+        pages_sec = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\memory\pages/sec'), 2); page_reads_sec = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\memory\page reads/sec'), 2)
+        cpu_pct = $cpuPct; cpu_queue = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\system\processor queue length'), 2)
+        disk_pct = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\physicaldisk(_total)\% disk time'), 1); disk_queue = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\physicaldisk(_total)\avg. disk queue length'), 2)
+        disk_read_mb = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\physicaldisk(_total)\disk read bytes/sec') / 1MB, 2)
+        disk_write_mb = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\physicaldisk(_total)\disk write bytes/sec') / 1MB, 2)
         net_sent_kb = [math]::Round($netSentKB / 1KB, 1); net_recv_kb = [math]::Round($netRecvKB / 1KB, 1)
         top_ram = $by_ram; top_private = $by_private; top_cpu = $by_cpu; all_processes = $allProcs; suspicious = $suspicious
         disks = $disks; startup = $startupItems; pagefile = $pagefile; heavy_services = $heavyServices; ps_profiles = $psProfiles
-        insights = $insights; gpu = $gpuResult; groups = @{ browser = $browserGroup; dev_tools = $devGroup; security = $secGroup }
+        cpu = @{
+            name = $cpuName
+            sockets = $cpuSockets
+            cores = $cpuCores
+            logical = $cpuLogical
+            base_mhz = $cpuBaseMhz
+            current_mhz = $cpuCurrentMhz
+            max_seen_mhz = $script:SessionMaxCpuMhz
+            performance_pct = $cpuPerfPct
+            temp_c = $script:cpuTempC
+            max_temp_c = $script:SessionMaxCpuTempC
+            temp_supported = $script:cpuTempSupported
+            power_w = $null
+            max_power_w = $script:SessionMaxCpuPowerW
+            power_supported = $false
+        }
+        insights = $insights; gpu = $gpuResult; network = $network; groups = @{ browser = $browserGroup; dev_tools = $devGroup; security = $secGroup }
+        collection_state = if ($samples.Count -gt 0 -and $processes.Count -gt 0) { 'valid' } elseif ($script:LiveDataCache) { 'stale' } else { 'transiently_unavailable' }
+        cache_age_ms = [int]((Get-Date) - $script:LiveCacheTime).TotalMilliseconds
+        subsystems = @{
+            counters = if ($samples.Count -gt 0) { 'valid' } else { 'transiently_unavailable' }
+            processes = if ($processes.Count -gt 0) { 'valid' } else { 'transiently_unavailable' }
+            gpu = if ($gpuResult.available -and $gpuResult.engines_supported) { 'valid' } elseif ($gpuResult.available) { 'unsupported' } else { 'missing' }
+            network = if ($netAdapterRows.Count -gt 0) { 'valid' } else { 'missing' }
+            static = if ($disks.Count -gt 0 -or $startupItems.Count -gt 0) { 'valid' } else { 'transiently_unavailable' }
+        }
+        errors_recent = @($script:Errors | Select-Object -Last 5)
         _perf_ms = $perfMs; _loading = $false
     }
 }
@@ -563,11 +844,55 @@ $profilePathsFile = $args[2]
 $bgDebug = if ($args[3] -eq "1") { $true } else { $false }
 Import-Module CimCmdlets -ErrorAction SilentlyContinue
 Import-Module Microsoft.PowerShell.Utility -ErrorAction SilentlyContinue
+function Get-CounterSampleValue {
+    param(
+        [array]$Samples,
+        [string]$Pattern,
+        [switch]$Sum
+    )
+    $matches = @($Samples | Where-Object { $_.Path -like "*$Pattern*" })
+    if ($matches.Count -eq 0) { return 0 }
+    if ($Sum) {
+        return [double](($matches | Measure-Object CookedValue -Sum).Sum)
+    }
+    return [double]$matches[0].CookedValue
+}
+# These helpers are duplicated into the background collector on purpose because
+# this script is emitted as a standalone worker process.
+function Get-LinkSpeedBps {
+    param([string]$LinkSpeed)
+    if ([string]::IsNullOrWhiteSpace($LinkSpeed)) { return 0 }
+    if ($LinkSpeed -match '([\d\.]+)\s*(Kbps|Mbps|Gbps|Tbps|bps)') {
+        $value = [double]$matches[1]
+        switch ($matches[2].ToLowerInvariant()) {
+            'tbps' { return [double]($value * 1TB) }
+            'gbps' { return [double]($value * 1GB) }
+            'mbps' { return [double]($value * 1MB) }
+            'kbps' { return [double]($value * 1KB) }
+            default { return $value }
+        }
+    }
+    return 0
+}
+function Get-AdapterKind {
+    param($Adapter)
+    $joined = @(
+        [string]$Adapter.Name,
+        [string]$Adapter.InterfaceDescription,
+        [string]$Adapter.MediaType,
+        [string]$Adapter.PhysicalMediaType
+    ) -join ' '
+    if ($joined -match 'wi-?fi|wireless|802\.11') { return 'Wi-Fi' }
+    if ($joined -match 'ethernet|802\.3') { return 'Ethernet' }
+    return 'Other'
+}
 $bgStart = [DateTime]::UtcNow.Ticks
-try { $profilePathsJson = Get-Content $profilePathsFile -Raw -ErrorAction SilentlyContinue } catch { $profilePathsJson = '[]' }
-try { $profilePaths = $profilePathsJson | ConvertFrom-Json } catch { $profilePaths = @() }
+try { $profilePathsJson = Get-Content $profilePathsFile -Raw -ErrorAction SilentlyContinue } catch { if ($bgDebug) { Write-Host "[BG DEBUG] Profile path read failed: $_" -ForegroundColor Yellow }; $profilePathsJson = '[]' }
+try { $profilePaths = $profilePathsJson | ConvertFrom-Json } catch { if ($bgDebug) { Write-Host "[BG DEBUG] Profile path JSON failed: $_" -ForegroundColor Yellow }; $profilePaths = @() }
 $os = Get-CimInstance Win32_OperatingSystem
 $video = @(Get-CimInstance Win32_VideoController -Property Name, AdapterRAM, Status -ErrorAction SilentlyContinue)
+$cpuMeta = @(Get-CimInstance Win32_Processor -Property Name, NumberOfCores, NumberOfLogicalProcessors, MaxClockSpeed, CurrentClockSpeed, SocketDesignation, Status -ErrorAction SilentlyContinue)
+$netAdapters = @(try { Get-NetAdapter -Physical -ErrorAction Stop | Select-Object Name, InterfaceDescription, Status, LinkSpeed, MediaType, PhysicalMediaType, MacAddress } catch { if ($bgDebug) { Write-Host "[BG DEBUG] Net adapter collection failed: $_" -ForegroundColor Yellow }; @() })
 $totalRAMMB = [math]::Round($os.TotalVisibleMemorySize / 1024, 0)
 $firstRun = $true
 $bgRefreshRate = 1000
@@ -576,38 +901,67 @@ $lastHeavyCollect = 0
 $lastStaticCollect = 0
 $heavyInterval = 4
 $staticInterval = 30
+$cmdLines = @{}
+$processes = @()
+$all_processes = @()
+$by_ram = @()
+$by_private = @()
+$by_cpu = @()
+$suspicious = @()
+$browserGroup = @{ ws_mb = 0.0; count = 0 }
+$devGroup = @{ ws_mb = 0.0; count = 0 }
+$secGroup = @{ ws_mb = 0.0; count = 0 }
+$PROCESS_GROUPS = @{
+    browser = @('msedge', 'arc', 'chrome', 'opera', 'brave', 'firefox', 'electron', 'librewolf')
+    dev_tools = @('node', 'bun', 'python', 'java', 'code', 'webstorm', 'rider', 'idea', 'pycharm', 'goland', 'datagrip', 'phpstorm', 'ruby', 'rust', 'cargo', 'opencode', 'codex', 'chatgpt', 'pieces', 'os-server')
+    security = @('msmpeng', 'malware', 'mbam', 'glasswire', 'portmaster', 'defender', 'avast', 'kaspersky', 'bitdefender', 'eset')
+}
+function Test-ProcessNameInGroup {
+    param([string]$Name, [string]$Group)
+    if ([string]::IsNullOrWhiteSpace($Name) -or -not $PROCESS_GROUPS.ContainsKey($Group)) { return $false }
+    return ($PROCESS_GROUPS[$Group] -contains $Name.ToLowerInvariant())
+}
+$disks = @()
+$heavyServices = @()
+$startup = @()
+$pagefile = @()
+$psProfiles = @()
+$maxObservedCpuMhz = 0
 if ($bgDebug) { Write-Host "[BG DEBUG] Started. Debug mode ON." -ForegroundColor Cyan }
 while ($true) {
     $cycleCount++
-    try { $bgRefreshRate = [int](Get-Content $refreshRateFile -Raw -ErrorAction SilentlyContinue) } catch {}
+    try { $bgRefreshRate = [int](Get-Content $refreshRateFile -Raw -ErrorAction SilentlyContinue) } catch { if ($bgDebug) { Write-Host "[BG DEBUG] Refresh rate read failed: $_" -ForegroundColor Yellow } }
     if ($bgRefreshRate -lt 500) { $bgRefreshRate = 500 }
+    # Heavy collectors run less often than fast counters so the live dashboard
+    # feels responsive without clearing slower sections between cycles.
+    $heavyInterval = [math]::Max([int][math]::Ceiling(4000 / $bgRefreshRate), 1)
+    $staticInterval = [math]::Max([int][math]::Ceiling(30000 / $bgRefreshRate), 1)
+    $isInitialCycle = $firstRun
     if ($firstRun) { $firstRun = $false } else { Start-Sleep -Milliseconds $bgRefreshRate }
     if ($bgDebug) { Write-Host "[BG DEBUG] Cycle $cycleCount at ${bgRefreshRate}ms" -ForegroundColor Cyan }
     $t0 = [DateTime]::UtcNow.Ticks
     try {
-        $counters = Get-Counter '\Memory\Available MBytes','\Memory\Committed Bytes','\Memory\Commit Limit','\Memory\Pool Paged Bytes','\Memory\Pool Nonpaged Bytes','\Memory\Pages/sec','\Memory\Page Reads/sec','\Processor(_Total)\% Processor Time','\System\Processor Queue Length','\PhysicalDisk(_Total)\% Disk Time','\PhysicalDisk(_Total)\Avg. Disk Queue Length','\PhysicalDisk(_Total)\Disk Read Bytes/sec','\PhysicalDisk(_Total)\Disk Write Bytes/sec','\Network Interface(*)\Bytes Sent/sec','\Network Interface(*)\Bytes Received/sec' -ErrorAction SilentlyContinue
-        $s = @{}
-        if ($counters) { foreach ($sm in $counters.CounterSamples) { $idx = $sm.Path.IndexOf("\", 2); $clean = $sm.Path.Substring($idx).ToUpperInvariant(); $s[$clean] = $sm.CookedValue } }
-        $memAvailMB = [math]::Round([double]$s['\MEMORY\AVAILABLE MBYTES'], 2)
+        $counters = Get-Counter '\Memory\Available MBytes','\Memory\Committed Bytes','\Memory\Commit Limit','\Memory\Pool Paged Bytes','\Memory\Pool Nonpaged Bytes','\Memory\Pages/sec','\Memory\Page Reads/sec','\Processor(_Total)\% Processor Time','\Processor Information(_Total)\Processor Frequency','\Processor Information(_Total)\% Processor Performance','\System\Processor Queue Length','\PhysicalDisk(_Total)\% Disk Time','\PhysicalDisk(_Total)\Avg. Disk Queue Length','\PhysicalDisk(_Total)\Disk Read Bytes/sec','\PhysicalDisk(_Total)\Disk Write Bytes/sec','\Network Interface(*)\Bytes Sent/sec','\Network Interface(*)\Bytes Received/sec' -ErrorAction SilentlyContinue
+        $samples = if ($counters) { @($counters.CounterSamples) } else { @() }
+        $memAvailMB = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\memory\available mbytes'), 2)
         $usedRAMMB = $totalRAMMB - $memAvailMB
         $ramPct = if ($totalRAMMB -gt 0) { [math]::Round(($usedRAMMB / $totalRAMMB) * 100, 1) } else { 0 }
-        $commitBytes = [double]$s['\MEMORY\COMMITTED BYTES']
-        $commitLimitBytes = [double]$s['\MEMORY\COMMIT LIMIT']
+        $commitBytes = Get-CounterSampleValue -Samples $samples -Pattern '\memory\committed bytes'
+        $commitLimitBytes = Get-CounterSampleValue -Samples $samples -Pattern '\memory\commit limit'
         $commitPct = if ($commitLimitBytes -gt 0) { [math]::Round(($commitBytes / $commitLimitBytes) * 100, 1) } else { 0 }
-        $cpuPct = [math]::Round([double]$s['\PROCESSOR(_TOTAL)\% PROCESSOR TIME'], 1)
-        $netSentKB = 0.0; $netRecvKB = 0.0
-        foreach ($k in $s.Keys) { if ($k -like '*BYTES SENT*') { $netSentKB += $s[$k] } elseif ($k -like '*BYTES RECEIVED*') { $netRecvKB += $s[$k] } }
-        $diskPct = [math]::Round([double]$s['\PHYSICALDISK(_TOTAL)\% DISK TIME'], 1)
-        $doHeavy = ($cycleCount - $lastHeavyCollect) -ge $heavyInterval
-        $doStatic = ($cycleCount - $lastStaticCollect) -ge $staticInterval
+        $cpuPct = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\processor(_total)\% processor time'), 1)
+        $netSentKB = Get-CounterSampleValue -Samples $samples -Pattern 'bytes sent/sec' -Sum
+        $netRecvKB = Get-CounterSampleValue -Samples $samples -Pattern 'bytes received/sec' -Sum
+        $diskPct = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\physicaldisk(_total)\% disk time'), 1)
+        $doHeavy = $isInitialCycle -or (($cycleCount - $lastHeavyCollect) -ge $heavyInterval)
+        $doStatic = $isInitialCycle -or (($cycleCount - $lastStaticCollect) -ge $staticInterval)
         if ($doHeavy) { $lastHeavyCollect = $cycleCount }
         if ($doStatic) { $lastStaticCollect = $cycleCount }
-        $cmdLines = @{}
-        $procs = @(); $all_processes = @(); $by_ram = @(); $by_private = @(); $by_cpu = @(); $suspicious = @()
-        $browserGroup = @{ ws_mb = 0.0; count = 0 }; $devGroup = @{ ws_mb = 0.0; count = 0 }; $secGroup = @{ ws_mb = 0.0; count = 0 }
-        $heavyServices = @()
         if ($doHeavy) {
-            foreach ($c in @(Get-CimInstance Win32_Process -Property ProcessId, CommandLine, ExecutablePath -ErrorAction SilentlyContinue)) { $cmdLines[[int]$c.ProcessId] = @{ cmd = $c.CommandLine; path = $c.ExecutablePath } }
+            if ($doStatic -or $cmdLines.Count -eq 0) {
+                $cmdLines = @{}
+                foreach ($c in @(Get-CimInstance Win32_Process -Property ProcessId, CommandLine, ExecutablePath -ErrorAction SilentlyContinue)) { $cmdLines[[int]$c.ProcessId] = @{ cmd = $c.CommandLine; path = $c.ExecutablePath } }
+            }
             $procs = Get-Process -ErrorAction SilentlyContinue | Select-Object -First 300
             $processes = @($procs | ForEach-Object { $p = $_; $extra = $cmdLines[[int]$p.Id]; [PSCustomObject]@{ name = $p.ProcessName; pid = $p.Id; ws_mb = [math]::Round($p.WorkingSet64 / 1MB, 1); private_mb = [math]::Round($p.PrivateMemorySize64 / 1MB, 1); cpu_s = [math]::Round($p.CPU, 1); threads = $p.Threads.Count; handles = $p.Handles; path = if ($extra) { $extra.path } else { $null }; command_line = if ($extra) { $extra.cmd } else { $null } } })
             $all_processes = @($processes | Sort-Object ws_mb -Descending | Select-Object -First 300)
@@ -615,24 +969,25 @@ while ($true) {
             $by_private = @($processes | Sort-Object private_mb -Descending | Select-Object -First 30)
             $by_cpu = @($processes | Sort-Object cpu_s -Descending | Select-Object -First 20)
             $browserGroup = @{ ws_mb = 0.0; count = 0 }; $devGroup = @{ ws_mb = 0.0; count = 0 }; $secGroup = @{ ws_mb = 0.0; count = 0 }
-            $browserPattern = 'msedge|arc|chrome|opera|brave|firefox|electron|librewolf'
-            $devPattern = 'node|bun|python|java|code|webstorm|rider|idea|pycharm|goland|datagrip|phpstorm|ruby|rust|cargo|opencode|codex|chatgpt|pieces|os-server'
-            $secPattern = 'msmpeng|malware|mbam|glasswire|portmaster|defender|avast|kaspersky|bitdefender|eset'
-            foreach ($p in $processes) { $n = $p.name.ToLowerInvariant(); if ($n -match $browserPattern) { $browserGroup.ws_mb += $p.ws_mb; $browserGroup.count++ } elseif ($n -match $devPattern) { $devGroup.ws_mb += $p.ws_mb; $devGroup.count++ } elseif ($n -match $secPattern) { $secGroup.ws_mb += $p.ws_mb; $secGroup.count++ } }
+            foreach ($p in $processes) { $n = $p.name.ToLowerInvariant(); if (Test-ProcessNameInGroup -Name $n -Group 'browser') { $browserGroup.ws_mb += $p.ws_mb; $browserGroup.count++ } elseif (Test-ProcessNameInGroup -Name $n -Group 'dev_tools') { $devGroup.ws_mb += $p.ws_mb; $devGroup.count++ } elseif (Test-ProcessNameInGroup -Name $n -Group 'security') { $secGroup.ws_mb += $p.ws_mb; $secGroup.count++ } }
             $browserGroup.ws_mb = [math]::Round($browserGroup.ws_mb, 1); $devGroup.ws_mb = [math]::Round($devGroup.ws_mb, 1); $secGroup.ws_mb = [math]::Round($secGroup.ws_mb, 1)
         }
-        $gpuResult = @{ available = $false; adapters = @(); eng_type_totals = @{ '3d' = 0; 'videodecode' = 0; 'videoprocessing' = 0; 'copy' = 0; 'videoencode' = 0; 'security' = 0; 'vr' = 0; 'other' = 0 }; dedicated_used_gb = 0; dedicated_total_gb = 0 }
-        foreach ($adapter in $video) { $totalGB = if ($adapter.AdapterRAM -and $adapter.AdapterRAM -gt 0) { [math]::Round($adapter.AdapterRAM / 1GB, 1) } else { 0 }; $gpuResult.adapters += @{ name = $adapter.Name; status = $adapter.Status; dedicated_gb = 0; total_gb = $totalGB; pct = 0 }; $gpuResult.dedicated_total_gb += $totalGB }
+        $gpuResult = @{ available = $false; adapters = @(); eng_type_totals = @{ '3d' = 0; 'videodecode' = 0; 'videoprocessing' = 0; 'copy' = 0; 'videoencode' = 0; 'security' = 0; 'vr' = 0; 'other' = 0 }; dedicated_used_gb = 0; dedicated_total_gb = 0; engines_supported = $false; status_text = 'No GPU adapters detected' }
+        foreach ($adapter in $video) { $totalGB = if ($adapter.AdapterRAM -and $adapter.AdapterRAM -gt 0) { [math]::Round($adapter.AdapterRAM / 1GB, 1) } else { 0 }; $gpuResult.adapters += @{ name = $adapter.Name; status = $adapter.Status; dedicated_gb = 0; total_gb = $totalGB; pct = 0; telemetry_supported = $false }; $gpuResult.dedicated_total_gb += $totalGB }
         $gpuResult.available = $gpuResult.adapters.Count -gt 0
         if ($doHeavy) {
             try {
                 $gpuCounters = Get-Counter '\GPU Engine(*)\Utilization Percentage' -ErrorAction SilentlyContinue
-                if ($gpuCounters) { foreach ($sm in $gpuCounters.CounterSamples) { $p = $sm.Path.ToUpperInvariant(); if ($p -like '*GPU*ENG*3D*') { $gpuResult.eng_type_totals['3d'] += $sm.CookedValue } elseif ($p -like '*GPU*ENG*VIDEODECODE*') { $gpuResult.eng_type_totals['videodecode'] += $sm.CookedValue } elseif ($p -like '*GPU*ENG*VIDEOENCODE*') { $gpuResult.eng_type_totals['videoencode'] += $sm.CookedValue } } }
-            } catch {}
+                if ($gpuCounters) { foreach ($sm in $gpuCounters.CounterSamples) { $p = $sm.Path.ToUpperInvariant(); if ($p -like '*GPU*ENGINE*UTILIZATION*') { $gpuResult.engines_supported = $true }; if ($p -like '*GPU*ENG*3D*') { $gpuResult.eng_type_totals['3d'] += $sm.CookedValue } elseif ($p -like '*GPU*ENG*VIDEODECODE*') { $gpuResult.eng_type_totals['videodecode'] += $sm.CookedValue } elseif ($p -like '*GPU*ENG*VIDEOENCODE*') { $gpuResult.eng_type_totals['videoencode'] += $sm.CookedValue } } }
+            } catch { if ($bgDebug) { Write-Host "[BG DEBUG] GPU counter collection failed: $_" -ForegroundColor Yellow } }
+        }
+        if ($gpuResult.available) {
+            $gpuResult.status_text = if ($gpuResult.engines_supported) { 'Collector active' } else { 'Adapters detected, engine counters unavailable' }
+            foreach ($adapter in $gpuResult.adapters) { $adapter.telemetry_supported = $gpuResult.engines_supported }
         }
         if ($doStatic) {
-            $drives = @(Get-CimInstance Win32_LogicalDisk -Property DeviceID, VolumeName, FileSystem, Size, FreeSpace -ErrorAction SilentlyContinue | Where-Object { $_.DriveType -eq 3 })
-            if ($drives.Count -eq 0) { try { $drives = @(Get-WmiObject Win32_LogicalDisk -ErrorAction SilentlyContinue | Where-Object { $_.DriveType -eq 3 }) } catch {} }
+            $drives = @(Get-CimInstance Win32_LogicalDisk -Property DeviceID, VolumeName, FileSystem, Size, FreeSpace, DriveType -ErrorAction SilentlyContinue | Where-Object { $_.DriveType -eq 3 })
+            if ($drives.Count -eq 0) { try { $drives = @(Get-WmiObject Win32_LogicalDisk -ErrorAction SilentlyContinue | Where-Object { $_.DriveType -eq 3 }) } catch { if ($bgDebug) { Write-Host "[BG DEBUG] Drive fallback failed: $_" -ForegroundColor Yellow } } }
             $disks = @()
             foreach ($d in $drives) { $used = $d.Size - $d.FreeSpace; $pct = if ($d.Size -gt 0) { [math]::Round(($used / $d.Size) * 100, 1) } else { 0 }; $disks += [PSCustomObject]@{ drive = $d.DeviceID; label = $d.VolumeName; fs = $d.FileSystem; total_gb = [math]::Round($d.Size / 1GB, 1); used_gb = [math]::Round($used / 1GB, 1); free_gb = [math]::Round($d.FreeSpace / 1GB, 1); pct = $pct; state = if ($pct -ge 90) { 'bad' } elseif ($pct -ge 80) { 'warn' } else { 'ok' } } }
             $services = @(Get-CimInstance Win32_Service -Property Name, DisplayName, State, StartMode, ProcessId -ErrorAction SilentlyContinue)
@@ -640,52 +995,115 @@ while ($true) {
             foreach ($svc in $services) { if ($svc.ProcessId -and $svc.ProcessId -gt 0) { $svcByPid[[int]$svc.ProcessId] = $svc } }
             $heavyServices = @()
             if ($doHeavy -and $by_ram) { $heavyServices = @($by_ram | ForEach-Object { $svc = $svcByPid[[int]$_.pid]; if ($svc) { [PSCustomObject]@{ name = $svc.Name; display_name = $svc.DisplayName; state = $svc.State; start_mode = $svc.StartMode; pid = $svc.ProcessId } } } | Select-Object -First 25) }
+            $startup = @(Get-CimInstance Win32_StartupCommand -Property Name, Command, Location, User -ErrorAction SilentlyContinue)
+            $pagefile = @()
+            try { foreach ($pf in @(Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue)) { $pagefile += [PSCustomObject]@{ name = $pf.Name; allocated_mb = $pf.AllocatedBaseSize; current_usage_mb = $pf.CurrentUsage; peak_usage_mb = $pf.PeakUsage } } } catch { if ($bgDebug) { Write-Host "[BG DEBUG] Pagefile collection failed: $_" -ForegroundColor Yellow } }
+            $psProfiles = @()
+            try { foreach ($pp in $profilePaths) { if ($pp) { $exists = Test-Path $pp -ErrorAction SilentlyContinue; $sizeKb = if ($exists) { [math]::Round((Get-Item $pp -ErrorAction SilentlyContinue).Length / 1KB, 1) } else { $null }; $psProfiles += [PSCustomObject]@{ path = $pp; exists = $exists; size_kb = $sizeKb } } } } catch { if ($bgDebug) { Write-Host "[BG DEBUG] Profile collection failed: $_" -ForegroundColor Yellow } }
+            $netAdapters = @(try { Get-NetAdapter -Physical -ErrorAction Stop | Select-Object Name, InterfaceDescription, Status, LinkSpeed, MediaType, PhysicalMediaType, MacAddress } catch { if ($bgDebug) { Write-Host "[BG DEBUG] Net adapter refresh failed: $_" -ForegroundColor Yellow }; @() })
         }
         $suspicious = @($all_processes | Where-Object { ($_.name -match 'powershell|pwsh|cmd|wscript|cscript|mshta|rundll32|regsvr32') -or ($_.command_line -match 'http://|https://|EncodedCommand|FromBase64String') } | Select-Object -First 50)
-        $pagefile = @()
-        try { foreach ($pf in @(Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue)) { $pagefile += [PSCustomObject]@{ name = $pf.Name; allocated_mb = $pf.AllocatedBaseSize; current_usage_mb = $pf.CurrentUsage; peak_usage_mb = $pf.PeakUsage } } } catch {}
-        $psProfiles = @()
-        try { foreach ($pp in $profilePaths) { if ($pp) { $exists = Test-Path $pp -ErrorAction SilentlyContinue; $sizeKb = if ($exists) { [math]::Round((Get-Item $pp -ErrorAction SilentlyContinue).Length / 1KB, 1) } else { $null }; $psProfiles += [PSCustomObject]@{ path = $pp; exists = $exists; size_kb = $sizeKb } } } } catch {}
         $memAvailGB = [math]::Round($memAvailMB / 1024, 1)
-        $pagedPoolBytes = [double]$s['\MEMORY\POOL PAGED BYTES']
+        $pagedPoolBytes = Get-CounterSampleValue -Samples $samples -Pattern '\memory\pool paged bytes'
         if ($pagedPoolBytes -le 0 -or [double]::IsNaN($pagedPoolBytes)) {
-            try { $pagedPoolBytes = [double](Get-CimInstance Win32_PerfRawData_PerfOS_Memory -ErrorAction SilentlyContinue).PoolPagedBytes } catch { $pagedPoolBytes = 0 }
+            try { $pagedPoolBytes = [double](Get-CimInstance Win32_PerfRawData_PerfOS_Memory -ErrorAction SilentlyContinue).PoolPagedBytes } catch { if ($bgDebug) { Write-Host "[BG DEBUG] Paged pool fallback failed: $_" -ForegroundColor Yellow }; $pagedPoolBytes = 0 }
         }
-        $nonPagedBytes = [double]$s['\MEMORY\POOL NONPAGED BYTES']
+        $nonPagedBytes = Get-CounterSampleValue -Samples $samples -Pattern '\memory\pool nonpaged bytes'
         if ($nonPagedBytes -le 0 -or [double]::IsNaN($nonPagedBytes)) {
-            try { $nonPagedBytes = [double](Get-CimInstance Win32_PerfRawData_PerfOS_Memory -ErrorAction SilentlyContinue).PoolNonpagedBytes } catch { $nonPagedBytes = 0 }
+            try { $nonPagedBytes = [double](Get-CimInstance Win32_PerfRawData_PerfOS_Memory -ErrorAction SilentlyContinue).PoolNonpagedBytes } catch { if ($bgDebug) { Write-Host "[BG DEBUG] Non-paged pool fallback failed: $_" -ForegroundColor Yellow }; $nonPagedBytes = 0 }
         }
         $pagedPoolMB = [math]::Round($pagedPoolBytes / 1MB, 2)
         $pagedPoolPct = if ($totalRAMMB -gt 0) { [math]::Round($pagedPoolMB / $totalRAMMB * 100, 1) } else { 0 }
         $nonPagedMB = [math]::Round($nonPagedBytes / 1MB, 0)
         $nonPagedPct = if ($totalRAMMB -gt 0) { [math]::Round($nonPagedMB / $totalRAMMB * 100, 1) } else { 0 }
+        $cpuName = 'Unknown CPU'
+        $cpuSockets = @($cpuMeta).Count
+        $cpuCores = 0
+        $cpuLogical = 0
+        $cpuBaseMhz = 0
+        $cpuCurrentMhz = 0
+        $cpuPerfPct = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\processor information(_total)\% processor performance'), 1)
+        $cpuFreqCounterMhz = [int][math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\processor information(_total)\processor frequency'), 0)
+        if ($cpuMeta.Count -gt 0) {
+            $cpuName = $cpuMeta[0].Name
+            $cpuBaseMhz = [int]($cpuMeta[0].MaxClockSpeed)
+            $cpuCurrentMhz = [int]($cpuMeta[0].CurrentClockSpeed)
+            foreach ($cpu in $cpuMeta) {
+                $cpuCores += [int]($cpu.NumberOfCores)
+                $cpuLogical += [int]($cpu.NumberOfLogicalProcessors)
+            }
+        }
+        if ($cpuFreqCounterMhz -gt 0) { $cpuCurrentMhz = $cpuFreqCounterMhz }
+        elseif ($cpuBaseMhz -gt 0 -and $cpuPerfPct -gt 0) { $cpuCurrentMhz = [int][math]::Round(($cpuBaseMhz * $cpuPerfPct) / 100, 0) }
+        if ($cpuCurrentMhz -gt $maxObservedCpuMhz) { $maxObservedCpuMhz = $cpuCurrentMhz }
+        $netAdapterRows = @()
+        foreach ($adapter in $netAdapters) {
+            $kind = Get-AdapterKind -Adapter $adapter
+            $linkSpeedBps = Get-LinkSpeedBps -LinkSpeed ([string]$adapter.LinkSpeed)
+            $netAdapterRows += [PSCustomObject]@{ name = $adapter.Name; description = $adapter.InterfaceDescription; status = $adapter.Status; link_speed = [string]$adapter.LinkSpeed; kind = $kind; media_type = if ($adapter.PhysicalMediaType) { [string]$adapter.PhysicalMediaType } else { [string]$adapter.MediaType }; link_speed_bps = $linkSpeedBps }
+        }
+        $activeNetAdapters = @($netAdapterRows | Where-Object { $_.status -eq 'Up' })
+        # Pick one adapter for the overview card, but keep the full adapter list
+        # for the system table.
+        $primaryNetAdapter = if ($activeNetAdapters.Count -gt 0) { @($activeNetAdapters | Sort-Object link_speed_bps -Descending | Select-Object -First 1)[0] } elseif ($netAdapterRows.Count -gt 0) { @($netAdapterRows | Sort-Object link_speed_bps -Descending | Select-Object -First 1)[0] } else { $null }
+        $network = @{ status_text = if ($netAdapterRows.Count -eq 0) { 'No physical adapters detected' } elseif ($activeNetAdapters.Count -eq 0) { 'No active physical adapter' } else { 'Collector active' }; busiest_adapter = if ($primaryNetAdapter) { $primaryNetAdapter.name } else { $null }; primary_type = if ($primaryNetAdapter) { $primaryNetAdapter.kind } else { 'Unknown' }; adapter_count = $netAdapterRows.Count; adapters = $netAdapterRows }
         $insights = @()
         if ($memAvailMB -lt 1024) { $insights += "CRITICAL: Less than 1GB RAM available ($memAvailGB GB)." }
         elseif ($memAvailMB -lt 2048) { $insights += "Low available RAM ($memAvailGB GB)." }
         if ($commitPct -ge 90) { $insights += "Commit charge > 90%." }
-        if ([double]$s['\MEMORY\PAGES/SEC'] -ge 1000) { $insights += "Heavy paging." }
+        if ((Get-CounterSampleValue -Samples $samples -Pattern '\memory\pages/sec') -ge 1000) { $insights += "Heavy paging." }
         if ($nonPagedMB -ge 1500) { $insights += "Non-paged pool high ($nonPagedMB MB)." }
         if ($cpuPct -ge 90) { $insights += "CPU at $cpuPct%." }
+        if ($cpuPct -ge 80 -and $commitPct -lt 80 -and $diskPct -lt 70) { $insights += "CPU pressure is likely the current bottleneck." }
+        if ($commitPct -ge 85 -and (Get-CounterSampleValue -Samples $samples -Pattern '\memory\pages/sec') -ge 500) { $insights += "High memory pressure with active paging." }
+        if ($diskPct -ge 85 -or (Get-CounterSampleValue -Samples $samples -Pattern '\physicaldisk(_total)\avg. disk queue length') -ge 2) { $insights += "Storage bottleneck likely." }
         if ($browserGroup.count -gt 0 -and $browserGroup.ws_mb -gt 2000) { $insights += "Browsers: $($browserGroup.count) procs, ~$($browserGroup.ws_mb) MB." }
         if ($devGroup.count -gt 0 -and $devGroup.ws_mb -gt 1000) { $insights += "Dev tools: $($devGroup.count) procs, ~$($devGroup.ws_mb) MB." }
         if ($secGroup.count -gt 0 -and $secGroup.ws_mb -gt 500) { $insights += "Security: $($secGroup.count) procs, ~$($secGroup.ws_mb) MB." }
+        if ($gpuResult.available -and -not $gpuResult.engines_supported) { $insights += "GPU telemetry partially unsupported on this device." }
+        if ($netAdapterRows.Count -eq 0) { $insights += "No physical network adapters detected." }
         if (-not $insights) { $insights += 'System healthy.' }
         $collectMs = [int](([DateTime]::UtcNow.Ticks - $t0) / 10000)
-        $startup = @(Get-CimInstance Win32_StartupCommand -Property Name, Command, Location, User -ErrorAction SilentlyContinue)
         $data = @{
-            ts = (Get-Date -Format 'HH:mm:ss'); hostname = $env:COMPUTERNAME; os_caption = $os.Caption; total_procs = $procs.Count; ram_pct = $ramPct
+            ts = (Get-Date -Format 'HH:mm:ss'); hostname = $env:COMPUTERNAME; os_caption = $os.Caption; total_procs = $processes.Count; ram_pct = $ramPct
             ram_used_gb = [math]::Round($usedRAMMB / 1024, 2); ram_total_gb = [math]::Round($totalRAMMB / 1024, 2); ram_avail_mb = $memAvailMB
             commit_pct = $commitPct; commit_gb = [math]::Round($commitBytes / 1GB, 2); limit_gb = [math]::Round($commitLimitBytes / 1GB, 2)
             paged_pool_mb = $pagedPoolMB; paged_pool_pct = $pagedPoolPct; non_paged_mb = $nonPagedMB; non_paged_pct = $nonPagedPct
-            pages_sec = [math]::Round([double]$s['\MEMORY\PAGES/SEC'], 2); page_reads_sec = [math]::Round([double]$s['\MEMORY\PAGE READS/SEC'], 2)
-            cpu_pct = $cpuPct; cpu_queue = [math]::Round([double]$s['\SYSTEM\PROCESSOR QUEUE LENGTH'], 2)
-            disk_pct = [math]::Round([double]$s['\PHYSICALDISK(_TOTAL)\% DISK TIME'], 1); disk_queue = [math]::Round([double]$s['\PHYSICALDISK(_TOTAL)\AVG. DISK QUEUE LENGTH'], 2)
-            disk_read_mb = [math]::Round([double]$s['\PHYSICALDISK(_TOTAL)\DISK READ BYTES/SEC'] / 1MB, 2)
-            disk_write_mb = [math]::Round([double]$s['\PHYSICALDISK(_TOTAL)\DISK WRITE BYTES/SEC'] / 1MB, 2)
+            pages_sec = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\memory\pages/sec'), 2); page_reads_sec = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\memory\page reads/sec'), 2)
+            cpu_pct = $cpuPct; cpu_queue = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\system\processor queue length'), 2)
+            disk_pct = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\physicaldisk(_total)\% disk time'), 1); disk_queue = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\physicaldisk(_total)\avg. disk queue length'), 2)
+            disk_read_mb = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\physicaldisk(_total)\disk read bytes/sec') / 1MB, 2)
+            disk_write_mb = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\physicaldisk(_total)\disk write bytes/sec') / 1MB, 2)
             net_sent_kb = [math]::Round($netSentKB / 1KB, 1); net_recv_kb = [math]::Round($netRecvKB / 1KB, 1)
             top_ram = $by_ram; top_private = $by_private; top_cpu = $by_cpu; all_processes = $all_processes; suspicious = $suspicious
             disks = $disks; startup = $startup; pagefile = $pagefile; heavy_services = $heavyServices; ps_profiles = $psProfiles
-            insights = $insights; gpu = $gpuResult; groups = @{ browser = $browserGroup; dev_tools = $devGroup; security = $secGroup }
+            cpu = @{
+                name = $cpuName
+                sockets = $cpuSockets
+                cores = $cpuCores
+                logical = $cpuLogical
+                base_mhz = $cpuBaseMhz
+                current_mhz = $cpuCurrentMhz
+                max_seen_mhz = $maxObservedCpuMhz
+                performance_pct = $cpuPerfPct
+                temp_c = $null
+                max_temp_c = $null
+                temp_supported = $false
+                power_w = $null
+                max_power_w = $null
+                power_supported = $false
+            }
+            insights = $insights; gpu = $gpuResult; network = $network; groups = @{ browser = $browserGroup; dev_tools = $devGroup; security = $secGroup }
+            collection_state = if ($samples.Count -gt 0 -and $processes.Count -gt 0) { 'valid' } else { 'transiently_unavailable' }
+            cache_age_ms = 0
+            subsystems = @{
+                counters = if ($samples.Count -gt 0) { 'valid' } else { 'transiently_unavailable' }
+                processes = if ($processes.Count -gt 0) { 'valid' } else { 'transiently_unavailable' }
+                gpu = if ($gpuResult.available -and $gpuResult.engines_supported) { 'valid' } elseif ($gpuResult.available) { 'unsupported' } else { 'missing' }
+                network = if ($netAdapterRows.Count -gt 0) { 'valid' } else { 'missing' }
+                static = if ($disks.Count -gt 0 -or $startup.Count -gt 0) { 'valid' } else { 'transiently_unavailable' }
+            }
+            errors_recent = @()
             _perf_ms = $collectMs; _loading = $false
         }
         $attempts = 0
@@ -712,14 +1130,28 @@ while ($true) {
     }
 }
 '@
-$bgScriptFile = Join-Path $env:TEMP "pcmon_bg_$(Get-Random).ps1"
-$bgScriptContent | Out-File -FilePath $bgScriptFile -Encoding UTF8 -Force
-$psExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { "pwsh" } elseif (Get-Command powershell -ErrorAction SilentlyContinue) { "powershell" } else { "powershell" }
-$bgDebugFlag = if ($script:DebugMode) { "1" } else { "0" }
-try {
-    $null = Start-Process -FilePath $psExe -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $bgScriptFile, $cacheFile, $refreshRateFile, $profilePathsFile, $bgDebugFlag -PassThru -NoNewWindow
-} catch {
-    Write-Host "[pcmon] Warning: Background process failed to start: $_" -ForegroundColor Yellow
+
+function Start-BackgroundCollector {
+    param(
+        [string]$CacheFile,
+        [string]$RefreshRateFile,
+        [string]$ProfilePathsFile
+    )
+    if ([string]::IsNullOrWhiteSpace($CacheFile) -or [string]::IsNullOrWhiteSpace($RefreshRateFile) -or [string]::IsNullOrWhiteSpace($ProfilePathsFile)) {
+        Write-Log "Background collector not started because a required path was missing." "ERROR"
+        return
+    }
+    $bgScriptFile = Join-Path $env:TEMP "pcmon_bg_$(Get-Random).ps1"
+    try {
+        $bgScriptContent | Out-File -FilePath $bgScriptFile -Encoding UTF8 -Force
+        $psExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { "pwsh" } elseif (Get-Command powershell -ErrorAction SilentlyContinue) { "powershell" } else { "powershell" }
+        $bgDebugFlag = if ($script:DebugMode) { "1" } else { "0" }
+        $args = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $bgScriptFile, $CacheFile, $RefreshRateFile, $ProfilePathsFile, $bgDebugFlag)
+        $null = Start-Process -FilePath $psExe -ArgumentList $args -PassThru -NoNewWindow
+    } catch {
+        Write-Log "Background process failed to start: $($_.Exception.Message)" "ERROR"
+        Write-Host "[pcmon] Warning: Background process failed to start: $_" -ForegroundColor Yellow
+    }
 }
 
 # -- 07-server --
@@ -746,6 +1178,7 @@ Write-Host "  $base/data"
 Write-Host "  $base/api/snapshots"
 Write-Host "  $base/api/report"
 Write-Host "  $base/api/report/download"
+Write-Host "  $base/api/export"
 Write-Host "  $base/stream $([char]0x1B)[36m(WebSocket/SSE)$([char]0x1B)[0m"
 Write-Host "  $base/health"
 Write-Host "  $base/errors"
@@ -761,9 +1194,8 @@ Write-Host ""
 
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://${HOSTNAME}:$Port/")
-$listener.TimeoutManager.RequestQueue = New-Object System.TimeSpan(0, 2, 0)
 
-$DIST_INDEX = Join-Path $WEB_DIR "dist\index.html"
+$DIST_INDEX = Join-Path $DIST_DIR "index.html"
 if (Test-Path $DIST_INDEX) {
     $script:StaticFiles['index.html'] = @{ data = [System.IO.File]::ReadAllBytes($DIST_INDEX); type = 'text/html; charset=utf-8' }
     $cssSrc = Join-Path $WEB_DIR "dashboard.css"
@@ -777,7 +1209,17 @@ if (Test-Path $DIST_INDEX) {
 $wallpaperFile = Join-Path $SCRIPT_DIR "wallpaper\index.html"
 if (Test-Path $wallpaperFile) { $script:StaticFiles['wallpaper.html'] = @{ data = [System.IO.File]::ReadAllBytes($wallpaperFile); type = 'text/html; charset=utf-8' } }
 
-$listener.Start()
+try {
+    $listener.Start()
+} catch {
+    Write-Host "[pcmon] Failed to start local HTTP listener on $base`: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Err "Listener start failed: $($_.Exception.Message)"
+    exit 1
+}
+
+$script:refreshRateFile = Join-Path $env:TEMP "pcmon_refresh_rate_$Port.txt"
+$profilePathsFile = Join-Path $env:TEMP "pcmon_profile_paths_$Port.json"
+"500" | Out-File -FilePath $script:refreshRateFile -Encoding UTF8 -Force
 
 $wsBroadcastTimer = New-Object System.Timers.Timer
 $wsBroadcastTimer.Interval = $script:WSBroadcastInterval
@@ -794,7 +1236,7 @@ Register-ObjectEvent -InputObject $wsBroadcastTimer -EventName Elapsed -Action {
                 }
             }
         }
-    } catch {}
+    } catch { Write-Log "WebSocket cache broadcast failed: $($_.Exception.Message)" "DEBUG" }
 } | Out-Null
 $wsBroadcastTimer.Start()
 
@@ -805,16 +1247,17 @@ $script:LastFastRateCheck = [DateTime]::MinValue
 function Get-FastMetrics {
     try {
         $counters = Get-Counter '\Memory\Available MBytes','\Memory\Committed Bytes','\Memory\Commit Limit','\Processor(_Total)\% Processor Time','\PhysicalDisk(_Total)\% Disk Time' -ErrorAction SilentlyContinue
-        $s = @{}
-        if ($counters) { foreach ($sm in $counters.CounterSamples) { $idx = $sm.Path.IndexOf("\", 2); $clean = $sm.Path.Substring($idx).ToUpperInvariant(); $s[$clean] = $sm.CookedValue } }
+        $samples = if ($counters) { @($counters.CounterSamples) } else { @() }
         $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
         $totalMB = if ($os) { [math]::Round($os.TotalVisibleMemorySize / 1024, 0) } else { 0 }
-        $availMB = if ($s['\MEMORY\AVAILABLE MBYTES']) { [math]::Round($s['\MEMORY\AVAILABLE MBYTES'], 0) } else { 0 }
+        $availMB = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\memory\available mbytes'), 0)
         $usedMB = $totalMB - $availMB
         $ramPct = if ($totalMB -gt 0) { [math]::Round(($usedMB / $totalMB) * 100, 1) } else { 0 }
         $commitPct = 0
-        if ($s['\MEMORY\COMMITTED BYTES'] -and $s['\MEMORY\COMMIT LIMIT']) {
-            $commitPct = [math]::Round(($s['\MEMORY\COMMITTED BYTES'] / $s['\MEMORY\COMMIT LIMIT']) * 100, 1)
+        $commitBytes = Get-CounterSampleValue -Samples $samples -Pattern '\memory\committed bytes'
+        $commitLimit = Get-CounterSampleValue -Samples $samples -Pattern '\memory\commit limit'
+        if ($commitBytes -and $commitLimit) {
+            $commitPct = [math]::Round(($commitBytes / $commitLimit) * 100, 1)
         }
         return @{
             ts = (Get-Date -Format 'HH:mm:ss')
@@ -823,11 +1266,11 @@ function Get-FastMetrics {
             ram_avail_mb = $availMB
             ram_total_gb = [math]::Round($totalMB / 1024, 1)
             commit_pct = $commitPct
-            cpu_pct = if ($s['\PROCESSOR(_TOTAL)\% PROCESSOR TIME']) { [math]::Round($s['\PROCESSOR(_TOTAL)\% PROCESSOR TIME'], 1) } else { 0 }
-            disk_pct = if ($s['\PHYSICALDISK(_TOTAL)\% DISK TIME']) { [math]::Round($s['\PHYSICALDISK(_TOTAL)\% DISK TIME'], 1) } else { 0 }
+            cpu_pct = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\processor(_total)\% processor time'), 1)
+            disk_pct = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\physicaldisk(_total)\% disk time'), 1)
             _fast = $true
         }
-    } catch { return $null }
+    } catch { Write-Log "Fast metric collection failed: $($_.Exception.Message)" "DEBUG"; return $null }
 }
 
 $fastTimer = New-Object System.Timers.Timer
@@ -841,9 +1284,20 @@ Register-ObjectEvent -InputObject $fastTimer -EventName Elapsed -Action {
     try {
         $data = Get-FastMetrics
         if ($data) { Broadcast-WebSocketData $data }
-    } catch {}
+    } catch { Write-Log "Fast broadcast failed: $($_.Exception.Message)" "DEBUG" }
 } | Out-Null
 $fastTimer.Start()
+
+$profilePathsFile = Join-Path $env:TEMP "pcmon_profile_paths_$Port.json"
+$profilePathsJson = @(
+    $PROFILE.AllUsersAllHosts,
+    $PROFILE.AllUsersCurrentHost,
+    $PROFILE.CurrentUserAllHosts,
+    $PROFILE.CurrentUserCurrentHost
+) | Where-Object { $_ } | ConvertTo-Json -Compress
+$profilePathsJson | Out-File -FilePath $profilePathsFile -Encoding UTF8 -Force
+
+Start-BackgroundCollector -CacheFile $cacheFile -RefreshRateFile $script:refreshRateFile -ProfilePathsFile $profilePathsFile
 
 $rateCheckTimer = New-Object System.Timers.Timer
 $rateCheckTimer.Interval = 2000
@@ -857,7 +1311,7 @@ Register-ObjectEvent -InputObject $rateCheckTimer -EventName Elapsed -Action {
                 $script:FastUpdateInterval = $newRate
             }
         }
-    } catch {}
+    } catch { Write-Log "Refresh rate timer failed: $($_.Exception.Message)" "DEBUG" }
 } | Out-Null
 $rateCheckTimer.Start()
 
@@ -866,10 +1320,10 @@ $cleanupTimer.Interval = 30000
 $cleanupTimer.AutoReset = $true
 Register-ObjectEvent -InputObject $cleanupTimer -EventName Elapsed -Action {
     $dead = [System.Collections.Generic.List[object]]::new()
-    foreach ($ws in $script:WSClients) {
+    foreach ($ws in @($script:WSClients)) {
         try { if ($ws.State -ne 'Open') { $dead.Add($ws) } } catch { $dead.Add($ws) }
     }
-    foreach ($d in $dead) { try { $script:WSClients.Remove($d) } catch {} }
+    foreach ($d in $dead) { try { $script:WSClients.Remove($d) } catch { Write-Log "WebSocket cleanup failed: $($_.Exception.Message)" "DEBUG" } }
     $errCount = $script:Errors.Count
     if ($errCount -gt 100) { $script:Errors = @($script:Errors | Select-Object -Last 100) }
     if ($script:DebugMode -and $dead.Count -gt 0) { Write-Host "[DEBUG] Cleanup removed $($dead.Count) stale WS clients" -ForegroundColor DarkGray }
@@ -929,22 +1383,18 @@ if ($Tray) {
     Write-Host "  System tray icon enabled." -ForegroundColor Green
 }
 
-Get-CachedStaticData
-
-$script:refreshRateFile = Join-Path $env:TEMP "pcmon_refresh_rate.txt"
-$profilePathsFile = Join-Path $env:TEMP "pcmon_profile_paths.json"
-"500" | Out-File -FilePath $script:refreshRateFile -Encoding UTF8 -Force
-$profilePathsJson = @(
-    $PROFILE.AllUsersAllHosts,
-    $PROFILE.AllUsersCurrentHost,
-    $PROFILE.CurrentUserAllHosts,
-    $PROFILE.CurrentUserCurrentHost
-) | Where-Object { $_ } | ConvertTo-Json -Compress
-$profilePathsJson | Out-File -FilePath $profilePathsFile -Encoding UTF8 -Force
-
 Write-Host "  Initializing..." -NoNewline
 $sw2 = [Diagnostics.Stopwatch]::StartNew()
 $sw2.Start()
+
+$script:shuttingDown = $false
+Register-EngineEvent -SourceIdentifier ([System.Management.Automation.PsEngineEvent]::Exiting) -Action {
+    $script:shuttingDown = $true
+    $listener.Stop()
+    Write-Host ""
+    Write-Host "[pcmon] Stopped." -ForegroundColor Yellow
+} | Out-Null
+
 if (Test-Path $cacheFile) {
     try {
         $script:LiveDataCache = Get-Content $cacheFile -Raw -ErrorAction Stop | ConvertFrom-Json
@@ -963,6 +1413,102 @@ Write-Host ""
 
 $script:BroadcastInterval = 100
 
+function Read-JsonFileSafe {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return $null }
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+        try {
+            $raw = [System.IO.File]::ReadAllText($Path)
+            if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+            return $raw | ConvertFrom-Json -ErrorAction Stop
+        } catch {
+            if ($attempt -eq 2) { Write-Log "JSON read failed for $Path`: $($_.Exception.Message)" "DEBUG" }
+            Start-Sleep -Milliseconds 30
+        }
+    }
+    return $null
+}
+
+function New-LoadingData {
+    $uptime = 0
+    try { $uptime = [math]::Round((New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds) } catch { Write-Log "Loading payload uptime calculation failed: $($_.Exception.Message)" "DEBUG" }
+    return @{
+        ts = (Get-Date -Format 'HH:mm:ss')
+        hostname = $env:COMPUTERNAME
+        os_caption = 'Collecting...'
+        total_procs = 0
+        ram_pct = $null
+        ram_avail_mb = $null
+        ram_total_gb = $null
+        commit_pct = $null
+        commit_gb = $null
+        limit_gb = $null
+        cpu_pct = $null
+        disk_pct = $null
+        top_ram = @()
+        top_private = @()
+        top_cpu = @()
+        all_processes = @()
+        suspicious = @()
+        disks = @()
+        startup = @()
+        pagefile = @()
+        heavy_services = @()
+        ps_profiles = @()
+        groups = @{ browser = @{ ws_mb = 0; count = 0 }; dev_tools = @{ ws_mb = 0; count = 0 }; security = @{ ws_mb = 0; count = 0 } }
+        gpu = @{ available = $false; adapters = @(); engines_supported = $false; status_text = 'Collecting GPU data...' }
+        network = @{ status_text = 'Collecting network data...'; adapter_count = 0; adapters = @() }
+        insights = @('Collecting first live sample.')
+        collection_state = 'warming'
+        cache_age_ms = $null
+        subsystems = @{ counters = 'warming'; processes = 'warming'; gpu = 'warming'; network = 'warming'; static = 'warming' }
+        errors_recent = @($script:Errors | Select-Object -Last 5)
+        uptime_seconds = $uptime
+        _perf_ms = 0
+        _loading = $true
+    }
+}
+
+function Get-CurrentData {
+    $data = Read-JsonFileSafe -Path $cacheFile
+    if ($data) {
+        try {
+            $fi = Get-Item $cacheFile -ErrorAction SilentlyContinue
+            if ($fi) { $data.cache_age_ms = [int]((Get-Date) - $fi.LastWriteTime).TotalMilliseconds }
+        } catch { Write-Log "Cache age calculation failed: $($_.Exception.Message)" "DEBUG" }
+        return $data
+    }
+    if ($script:LiveDataCache) { return $script:LiveDataCache }
+    $uptimeSeconds = 0
+    try { $uptimeSeconds = (New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds } catch { Write-Log "Fallback uptime calculation failed: $($_.Exception.Message)" "DEBUG" }
+    if ($uptimeSeconds -ge 5) {
+        Write-Log "No background cache after warmup; using synchronous fallback collection." "DEBUG"
+        return Get-LiveData
+    }
+    return New-LoadingData
+}
+
+function Require-Method {
+    param($response, [string]$Actual, [string[]]$Allowed)
+    if ($Allowed -contains $Actual) { return $true }
+    $response.Headers.Add("Allow", ($Allowed -join ", "))
+    Send-JsonError $response 405 "Method not allowed"
+    return $false
+}
+
+function Send-NotFound($response, [string]$Message = "Not found") {
+    Send-JsonError $response 404 $Message
+}
+
+function Get-ReportRows {
+    param($Data)
+    $insights = @($Data.insights | ForEach-Object { "<div class='insight'>$(ConvertTo-HtmlEscaped $_)</div>" }) -join "`n"
+    $topRam = @($Data.top_ram | Select-Object -First 20 | ForEach-Object { "<tr><td>$(ConvertTo-HtmlEscaped $_.name)</td><td>$([int]$_.pid)</td><td>$([math]::Round($_.ws_mb))</td><td>$([math]::Round($_.private_mb))</td><td>$([math]::Round($_.cpu_s))</td></tr>" }) -join "`n"
+    $topCpu = @($Data.top_cpu | Select-Object -First 20 | ForEach-Object { "<tr><td>$(ConvertTo-HtmlEscaped $_.name)</td><td>$([int]$_.pid)</td><td>$([math]::Round($_.cpu_s))</td><td>$([math]::Round($_.ws_mb))</td></tr>" }) -join "`n"
+    $drives = @($Data.disks | ForEach-Object { "<tr><td>$(ConvertTo-HtmlEscaped $_.drive)</td><td>$(ConvertTo-HtmlEscaped $_.label)</td><td>$([math]::Round($_.total_gb))</td><td>$([math]::Round($_.free_gb))</td><td>$([math]::Round($_.used_gb))</td><td>$([math]::Round($_.pct))%</td></tr>" }) -join "`n"
+    return @{ insights = $insights; top_ram = $topRam; top_cpu = $topCpu; drives = $drives }
+}
+
 try {
     while ($listener.IsListening -and -not $script:shuttingDown) {
         try {
@@ -973,13 +1519,18 @@ try {
         }
         $request = $context.Request
         $response = $context.Response
-        $response.Headers.Add("Access-Control-Allow-Origin", "*")
+        $origin = $request.Headers.Get("Origin")
+        if ($origin -and $origin -match '^http://(localhost|127\.0\.0\.1):\d+$') {
+            $response.Headers.Add("Access-Control-Allow-Origin", $origin)
+        }
         $path = $request.Url.LocalPath
 
         if ($path -eq "/health") {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
+            # Keep /health cheap and always available, even if the cache is still warming.
             $ts = Get-Date -Format 'HH:mm:ss'
             $uptime = 0
-            try { $uptime = [math]::Round((New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds) } catch {}
+            try { $uptime = [math]::Round((New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds) } catch { Write-Log "Health uptime calculation failed: $($_.Exception.Message)" "DEBUG" }
             $json = "{`"status`":`"ok`",`"ts`":`"$ts`",`"uptime_seconds`":$uptime}"
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
             $response.ContentType = "application/json"
@@ -987,9 +1538,10 @@ try {
             Send-Response $response $buffer "application/json"
         }
         elseif ($path -eq "/errors") {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
             $osCaption = if ($script:CachedStatic -and $script:CachedStatic.OS) { $script:CachedStatic.OS.Caption } else { 'Unknown' }
             $uptime = 0
-            try { $uptime = [math]::Round((New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds) } catch {}
+            try { $uptime = [math]::Round((New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds) } catch { Write-Log "Error uptime calculation failed: $($_.Exception.Message)" "DEBUG" }
             $lastErrors = @()
             if ($script:Errors.Count -gt 0) { $lastErrors = @($script:Errors)[-20..-1] }
             $errList = ($lastErrors | Where-Object { $_ -is [string] -and $_ -ne "" } | ForEach-Object { '"' + $_.Replace('\','\\').Replace('"','\"') + '"' } | Join-String -Separator ',')
@@ -1001,20 +1553,22 @@ try {
             Send-Response $response $buffer "application/json"
         }
         elseif ($path -eq "/logs") {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
             $buffer = [System.Text.Encoding]::UTF8.GetBytes(($script:Errors -join "`n"))
             Send-Response $response $buffer "text/plain"
         }
         elseif ($path -eq "/debug") {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
             $staticFileCount = 0
-            try { $staticFileCount = [int](@($script:StaticFiles.Keys).Count) } catch {}
+            try { $staticFileCount = [int](@($script:StaticFiles.Keys).Count) } catch { Write-Log "Debug static count failed: $($_.Exception.Message)" "DEBUG" }
             $wsClientCount = 0
-            try { $wsClientCount = [int]$script:WSClients.Count } catch {}
+            try { $wsClientCount = [int]$script:WSClients.Count } catch { Write-Log "Debug WS count failed: $($_.Exception.Message)" "DEBUG" }
             $connMethod = ""
-            try { $connMethod = [string]$script:ConnectionMethod } catch {}
+            try { $connMethod = [string]$script:ConnectionMethod } catch { Write-Log "Debug connection method failed: $($_.Exception.Message)" "DEBUG" }
             $bcastMs = 0
-            try { $bcastMs = [int]$script:WSBroadcastInterval } catch {}
+            try { $bcastMs = [int]$script:WSBroadcastInterval } catch { Write-Log "Debug broadcast interval failed: $($_.Exception.Message)" "DEBUG" }
             $cacheExpiry = ""
-            try { $cacheExpiry = [string]$script:StaticCacheExpiry.ToString('o') } catch {}
+            try { $cacheExpiry = [string]$script:StaticCacheExpiry.ToString('o') } catch { Write-Log "Debug cache expiry failed: $($_.Exception.Message)" "DEBUG" }
             $startTime = [string](Get-Date).ToString('o')
             $json = "{`"start_time`":`"$startTime`",`"cache_expiry`":`"$cacheExpiry`",`"cached_services_count`":$(@($script:CachedStatic.Services).Count),`"cached_drives_count`":$(@($script:CachedStatic.Drives).Count),`"commandlines_cached`":$($script:CommandLines.Count),`"static_files`":$staticFileCount,`"ws_clients`":$wsClientCount,`"connection_method`":`"$connMethod`",`"broadcast_interval_ms`":$bcastMs}"
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
@@ -1023,7 +1577,8 @@ try {
             Send-Response $response $buffer "application/json"
         }
         elseif ($path -eq "/data") {
-            $data = Get-LiveData
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
+            $data = Get-CurrentData
             if ($null -eq $data) { $data = _CollectLiveData }
             $json = $data | ConvertTo-Json -Depth 20 -Compress
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
@@ -1031,13 +1586,24 @@ try {
             $response.ContentLength64 = $buffer.Length
             Send-Response $response $buffer "application/json"
         }
-        elseif ($path -match '^/api/snapshots$' -and $request.HttpMethod -eq "GET") {
+        elseif ($path -match '^/api/snapshots$') {
+            if (-not (Require-Method $response $request.HttpMethod @("GET", "POST"))) { continue }
+            if ($request.HttpMethod -eq "POST") {
+                $label = ""
+                try {
+                    $body = [System.IO.StreamReader]::new($request.InputStream).ReadToEnd()
+                    if ($body) { $parsed = $body | ConvertFrom-Json -ErrorAction Stop; if ($parsed.label) { $label = [string]$parsed.label } }
+                } catch { Write-Log "Snapshot save request parse failed: $($_.Exception.Message)" "DEBUG"; Send-JsonError $response 400 "Invalid snapshot request"; continue }
+                $result = Save-Snapshot -Label $label
+                Send-JsonObject $response $result
+                continue
+            }
             $files = Get-SnapshotFiles
             $list = @($files | ForEach-Object {
                 try {
                     $content = Get-Content $_.FullName -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
                     @{ id = $content.id; ts = $content.ts; label = $content.label; filename = $_.Name }
-                } catch { $null }
+                } catch { Write-Log "Snapshot metadata read failed: $($_.Exception.Message)" "DEBUG"; $null }
             } | Where-Object { $_ })
             $json = if ($list) { $list | ConvertTo-Json -Compress } else { '[]' }
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
@@ -1045,23 +1611,11 @@ try {
             $response.ContentLength64 = $buffer.Length
             Send-Response $response $buffer "application/json"
         }
-        elseif ($path -match '^/api/snapshots$' -and $request.HttpMethod -eq "POST") {
-            $label = ""
-            try {
-                $body = [System.IO.StreamReader]::new($request.InputStream).ReadToEnd()
-                if ($body) { $parsed = $body | ConvertFrom-Json; if ($parsed.label) { $label = $parsed.label } }
-            } catch {}
-            $result = Save-Snapshot -Label $label
-            $json = $result | ConvertTo-Json -Compress
-            $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
-            $response.ContentType = "application/json"
-            $response.ContentLength64 = $buffer.Length
-            Send-Response $response $buffer "application/json"
-        }
         elseif ($path -match '^/api/snapshots/([^/]+)$') {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
             $snapId = $matches[1]
-            $files = Get-SnapshotFiles
-            $snapshotFile = $files | Where-Object { $_.BaseName -eq "snapshot_$snapId" } | Select-Object -First 1
+            if (-not (Test-SnapshotId -Id $snapId)) { Send-JsonError $response 400 "Invalid snapshot ID"; continue }
+            $snapshotFile = Get-SnapshotFileById -Id $snapId
             if ($snapshotFile) {
                 $content = Get-Content $snapshotFile.FullName -Raw
                 $buffer = [System.Text.Encoding]::UTF8.GetBytes($content)
@@ -1069,12 +1623,13 @@ try {
                 $response.ContentLength64 = $buffer.Length
                 Send-Response $response $buffer
             } else {
-                $response.StatusCode = 404
-                $response.ContentLength64 = 0
+                Send-NotFound $response "Snapshot not found"
             }
         }
-        elseif ($path -match '^/api/snapshots/([^/]+)/compare$' -and $request.HttpMethod -eq "POST") {
+        elseif ($path -match '^/api/snapshots/([^/]+)/compare$') {
+            if (-not (Require-Method $response $request.HttpMethod @("POST"))) { continue }
             $snapId = $matches[1]
+            if (-not (Test-SnapshotId -Id $snapId)) { Send-JsonError $response 400 "Invalid snapshot ID"; continue }
             $result = Compare-Snapshots -SnapshotId $snapId
             $json = $result | ConvertTo-Json -Depth 20 -Compress
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
@@ -1083,9 +1638,10 @@ try {
             Send-Response $response $buffer "application/json"
         }
         elseif ($path -match '^/api/snapshots/([^/]+)/export$') {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
             $snapId = $matches[1]
-            $files = Get-SnapshotFiles
-            $snapshotFile = $files | Where-Object { $_.BaseName -eq "snapshot_$snapId" } | Select-Object -First 1
+            if (-not (Test-SnapshotId -Id $snapId)) { Send-JsonError $response 400 "Invalid snapshot ID"; continue }
+            $snapshotFile = Get-SnapshotFileById -Id $snapId
             if ($snapshotFile) {
                 $content = Get-Content $snapshotFile.FullName -Raw
                 $jsonObj = $content | ConvertFrom-Json
@@ -1097,14 +1653,14 @@ try {
                 $response.ContentLength64 = $buffer.Length
                 Send-Response $response $buffer
             } else {
-                $response.StatusCode = 404
-                $response.ContentLength64 = 0
+                Send-NotFound $response "Snapshot not found"
             }
         }
         elseif ($path -match '^/api/snapshots/([^/]+)/export\.csv$') {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
             $snapId = $matches[1]
-            $files = Get-SnapshotFiles
-            $snapshotFile = $files | Where-Object { $_.BaseName -eq "snapshot_$snapId" } | Select-Object -First 1
+            if (-not (Test-SnapshotId -Id $snapId)) { Send-JsonError $response 400 "Invalid snapshot ID"; continue }
+            $snapshotFile = Get-SnapshotFileById -Id $snapId
             if ($snapshotFile) {
                 $content = Get-Content $snapshotFile.FullName -Raw
                 $jsonObj = $content | ConvertFrom-Json
@@ -1117,25 +1673,25 @@ try {
                 $csvLines = @("Name,PID,Working Set (MB),CPU Time,Threads,Handles")
                 foreach ($p in $topRam) {
                     $name = if ($p.name) { $p.name.Replace(',', '_') } else { 'N/A' }
-                    $pid = if ($p.pid) { $p.pid } else { 0 }
+                    $procId = if ($p.pid) { $p.pid } else { 0 }
                     $ws = if ($p.ws_mb) { $p.ws_mb } else { 0 }
                     $cpu = if ($p.cpu_s) { $p.cpu_s } else { 0 }
                     $threads = if ($p.threads) { $p.threads } else { 0 }
                     $handles = if ($p.handles) { $p.handles } else { 0 }
-                    $csvLines += "$name,$pid,$ws,$cpu,$threads,$handles"
+                    $csvLines += "$name,$procId,$ws,$cpu,$threads,$handles"
                 }
                 $csvContent = $csvLines -join "`n"
                 $buffer = [System.Text.Encoding]::UTF8.GetBytes($csvContent)
                 Send-Response $response $buffer "text/csv" "attachment; filename=`"$filename`""
             } else {
-                $response.StatusCode = 404
-                $response.ContentLength64 = 0
+                Send-NotFound $response "Snapshot not found"
             }
         }
-        elseif ($path -match '^/api/snapshots/([^/]+)/delete$' -and $request.HttpMethod -eq "POST") {
+        elseif ($path -match '^/api/snapshots/([^/]+)/delete$') {
+            if (-not (Require-Method $response $request.HttpMethod @("POST"))) { continue }
             $snapId = $matches[1]
-            $files = Get-SnapshotFiles
-            $snapshotFile = $files | Where-Object { $_.BaseName -eq "snapshot_$snapId" } | Select-Object -First 1
+            if (-not (Test-SnapshotId -Id $snapId)) { Send-JsonError $response 400 "Invalid snapshot ID"; continue }
+            $snapshotFile = Get-SnapshotFileById -Id $snapId
             if ($snapshotFile) {
                 try {
                     Remove-Item $snapshotFile.FullName -Force -ErrorAction Stop
@@ -1149,45 +1705,42 @@ try {
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
             Send-Response $response $buffer "application/json"
         }
-        elseif ($path -match '^/api/process/(\d+)/kill$' -and $request.HttpMethod -eq "POST") {
+        elseif ($path -match '^/api/process/(\d+)/kill$') {
+            if (-not (Require-Method $response $request.HttpMethod @("POST"))) { continue }
             if ($request.Headers.Get("X-PCMON-Confirm") -ne "1") {
-                $response.StatusCode = 403
-                $response.ContentLength64 = 0
-                Send-Response $response $null "application/json"
+                Send-JsonError $response 403 "Missing confirmation header"
                 continue
             }
-            $pid = [int]$matches[1]
-            $result = Stop-ProcessById -ProcessId $pid -Force
+            $procId = [int]$matches[1]
+            $result = Stop-ProcessById -ProcessId $procId -Force
             $json = $result | ConvertTo-Json -Compress
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
             $response.ContentType = "application/json"
             $response.ContentLength64 = $buffer.Length
             Send-Response $response $buffer "application/json"
         }
-        elseif ($path -match '^/api/process/(\d+)/suspend$' -and $request.HttpMethod -eq "POST") {
+        elseif ($path -match '^/api/process/(\d+)/suspend$') {
+            if (-not (Require-Method $response $request.HttpMethod @("POST"))) { continue }
             if ($request.Headers.Get("X-PCMON-Confirm") -ne "1") {
-                $response.StatusCode = 403
-                $response.ContentLength64 = 0
-                Send-Response $response $null "application/json"
+                Send-JsonError $response 403 "Missing confirmation header"
                 continue
             }
-            $pid = [int]$matches[1]
-            $result = Suspend-ProcessById -ProcessId $pid
+            $procId = [int]$matches[1]
+            $result = Suspend-ProcessById -ProcessId $procId
             $json = $result | ConvertTo-Json -Compress
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
             $response.ContentType = "application/json"
             $response.ContentLength64 = $buffer.Length
             Send-Response $response $buffer "application/json"
         }
-        elseif ($path -match '^/api/process/(\d+)/resume$' -and $request.HttpMethod -eq "POST") {
+        elseif ($path -match '^/api/process/(\d+)/resume$') {
+            if (-not (Require-Method $response $request.HttpMethod @("POST"))) { continue }
             if ($request.Headers.Get("X-PCMON-Confirm") -ne "1") {
-                $response.StatusCode = 403
-                $response.ContentLength64 = 0
-                Send-Response $response $null "application/json"
+                Send-JsonError $response 403 "Missing confirmation header"
                 continue
             }
-            $pid = [int]$matches[1]
-            $result = Resume-ProcessById -ProcessId $pid
+            $procId = [int]$matches[1]
+            $result = Resume-ProcessById -ProcessId $procId
             $json = $result | ConvertTo-Json -Compress
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
             $response.ContentType = "application/json"
@@ -1195,14 +1748,17 @@ try {
             Send-Response $response $buffer "application/json"
         }
         elseif ($path -eq "/api/report") {
-            if (Test-Path $cacheFile) {
-                try { $data = Get-Content $cacheFile -Raw | ConvertFrom-Json } catch { $data = Get-LiveData }
-            } else { $data = Get-LiveData }
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
+            $data = Get-CurrentData
+            $reportRows = Get-ReportRows -Data $data
+            $reportTs = ConvertTo-HtmlEscaped $data.ts
+            $reportHost = ConvertTo-HtmlEscaped $data.hostname
+            $reportOs = ConvertTo-HtmlEscaped $data.os_caption
             $html = @"
 <!DOCTYPE html>
 <html>
 <head>
-<title>PCMON System Report - $($data.ts)</title>
+<title>PCMON System Report - $reportTs</title>
 <style>
 body { font-family: Arial, sans-serif; padding: 20px; max-width: 1200px; margin: 0 auto; }
 h1 { color: #333; }
@@ -1220,10 +1776,10 @@ th { background: #f5f5f5; }
 </head>
 <body>
 <h1>PCMON System Report</h1>
-<p>Generated: $($data.ts) | Host: $($data.hostname)</p>
+<p>Generated: $reportTs | Host: $reportHost</p>
 
 <div class="system-info">
-<p><strong>OS:</strong> $($data.os_caption)</p>
+<p><strong>OS:</strong> $reportOs</p>
 <p><strong>Total Processes:</strong> $($data.total_procs)</p>
 </div>
 
@@ -1245,24 +1801,24 @@ th { background: #f5f5f5; }
 </table>
 
 <h2>Insights</h2>
-$($data.insights | ForEach-Object { "<div class='insight'>$_</div>" })
+$($reportRows.insights)
 
 <h2>Top Processes (RAM)</h2>
 <table>
 <tr><th>Name</th><th>PID</th><th>Working Set (MB)</th><th>Private (MB)</th><th>CPU Time (s)</th></tr>
-$($data.top_ram | Select-Object -First 20 | ForEach-Object { "<tr><td>$($_.name)</td><td>$($_.pid)</td><td>$([math]::Round($_.ws_mb))</td><td>$([math]::Round($_.private_mb))</td><td>$([math]::Round($_.cpu_s))</td></tr>" })
+$($reportRows.top_ram)
 </table>
 
 <h2>Top Processes (CPU)</h2>
 <table>
 <tr><th>Name</th><th>PID</th><th>CPU Time (s)</th><th>Working Set (MB)</th></tr>
-$($data.top_cpu | Select-Object -First 20 | ForEach-Object { "<tr><td>$($_.name)</td><td>$($_.pid)</td><td>$([math]::Round($_.cpu_s))</td><td>$([math]::Round($_.ws_mb))</td></tr>" })
+$($reportRows.top_cpu)
 </table>
 
 <h2>Drives</h2>
 <table>
 <tr><th>Drive</th><th>Label</th><th>Total GB</th><th>Free GB</th><th>Used GB</th><th>Usage %</th></tr>
-$($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><td>$([math]::Round($_.total_gb))</td><td>$([math]::Round($_.free_gb))</td><td>$([math]::Round($_.used_gb))</td><td>$([math]::Round($_.pct))%</td></tr>" })
+$($reportRows.drives)
 </table>
 
 <h2>Process Groups</h2>
@@ -1284,14 +1840,17 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
             Send-Response $response $buffer "text/html; charset=utf-8"
         }
         elseif ($path -eq "/api/report/download") {
-            if (Test-Path $cacheFile) {
-                try { $data = Get-Content $cacheFile -Raw | ConvertFrom-Json } catch { $data = Get-LiveData }
-            } else { $data = Get-LiveData }
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
+            $data = Get-CurrentData
+            $reportRows = Get-ReportRows -Data $data
+            $reportTs = ConvertTo-HtmlEscaped $data.ts
+            $reportHost = ConvertTo-HtmlEscaped $data.hostname
+            $reportOs = ConvertTo-HtmlEscaped $data.os_caption
             $html = @"
 <!DOCTYPE html>
 <html>
 <head>
-<title>PCMON System Report - $($data.ts)</title>
+<title>PCMON System Report - $reportTs</title>
 <style>
 body { font-family: Arial, sans-serif; padding: 20px; max-width: 1200px; margin: 0 auto; }
 h1 { color: #333; }
@@ -1308,10 +1867,10 @@ th { background: #f5f5f5; }
 </head>
 <body>
 <h1>PCMON System Report</h1>
-<p>Generated: $($data.ts) | Host: $($data.hostname)</p>
+<p>Generated: $reportTs | Host: $reportHost</p>
 
 <div class="system-info">
-<p><strong>OS:</strong> $($data.os_caption)</p>
+<p><strong>OS:</strong> $reportOs</p>
 <p><strong>Total Processes:</strong> $($data.total_procs)</p>
 </div>
 
@@ -1333,24 +1892,24 @@ th { background: #f5f5f5; }
 </table>
 
 <h2>Insights</h2>
-$($data.insights | ForEach-Object { "<div class='insight'>$_</div>" })
+$($reportRows.insights)
 
 <h2>Top Processes (RAM)</h2>
 <table>
 <tr><th>Name</th><th>PID</th><th>Working Set (MB)</th><th>Private (MB)</th><th>CPU Time (s)</th></tr>
-$($data.top_ram | Select-Object -First 20 | ForEach-Object { "<tr><td>$($_.name)</td><td>$($_.pid)</td><td>$([math]::Round($_.ws_mb))</td><td>$([math]::Round($_.private_mb))</td><td>$([math]::Round($_.cpu_s))</td></tr>" })
+$($reportRows.top_ram)
 </table>
 
 <h2>Top Processes (CPU)</h2>
 <table>
 <tr><th>Name</th><th>PID</th><th>CPU Time (s)</th><th>Working Set (MB)</th></tr>
-$($data.top_cpu | Select-Object -First 20 | ForEach-Object { "<tr><td>$($_.name)</td><td>$($_.pid)</td><td>$([math]::Round($_.cpu_s))</td><td>$([math]::Round($_.ws_mb))</td></tr>" })
+$($reportRows.top_cpu)
 </table>
 
 <h2>Drives</h2>
 <table>
 <tr><th>Drive</th><th>Label</th><th>Total GB</th><th>Free GB</th><th>Used GB</th><th>Usage %</th></tr>
-$($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><td>$([math]::Round($_.total_gb))</td><td>$([math]::Round($_.free_gb))</td><td>$([math]::Round($_.used_gb))</td><td>$([math]::Round($_.pct))%</td></tr>" })
+$($reportRows.drives)
 </table>
 
 <h2>Process Groups</h2>
@@ -1368,8 +1927,19 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($html)
             Send-Response $response $buffer "text/html; charset=utf-8" "attachment; filename=`"$filename`""
         }
-        elseif (($path -eq "/api/thresholds" -or $path -eq "/api/config") -and $request.HttpMethod -eq "GET") {
+        elseif ($path -eq "/api/thresholds" -and $request.HttpMethod -ne "GET") {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
+            continue
+        }
+        elseif ($path -eq "/api/thresholds" -and $request.HttpMethod -eq "GET") {
             $json = $script:AlertThresholds | ConvertTo-Json -Compress
+            $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
+            $response.ContentType = "application/json"
+            $response.ContentLength64 = $buffer.Length
+            Send-Response $response $buffer "application/json"
+        }
+        elseif ($path -eq "/api/config" -and $request.HttpMethod -eq "GET") {
+            $json = @{ thresholds = $script:AlertThresholds } | ConvertTo-Json -Compress
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
             $response.ContentType = "application/json"
             $response.ContentLength64 = $buffer.Length
@@ -1384,7 +1954,7 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
                         if ($script:AlertThresholds.ContainsKey($key)) {
                             $value = $parsed.$key
                             # Validate numeric type for threshold values
-                            if ($value -is [double] -or $value -is [int] -or $value -is [float]) {
+                            if ($value -is [double] -or $value -is [int] -or $value -is [float] -or $value -is [long]) {
                                 $script:AlertThresholds[$key] = $value
                             }
                         }
@@ -1403,6 +1973,7 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
             Send-Response $response $buffer "application/json"
         }
         elseif ($path -eq "/api/bootstrap") {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
             $json = @{
                 csrf_token = [guid]::NewGuid().ToString()
                 thresholds = $script:AlertThresholds
@@ -1412,7 +1983,8 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
             $response.ContentLength64 = $buffer.Length
             Send-Response $response $buffer "application/json"
         }
-        elseif ($path -eq "/api/refresh-rate" -and $request.HttpMethod -eq "POST") {
+        elseif ($path -eq "/api/refresh-rate") {
+            if (-not (Require-Method $response $request.HttpMethod @("POST"))) { continue }
             try {
                 $body = [System.IO.StreamReader]::new($request.InputStream).ReadToEnd()
                 if ($body) {
@@ -1434,20 +2006,47 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
             $response.ContentLength64 = $buffer.Length
             Send-Response $response $buffer "application/json"
         }
-        elseif ($path -eq "/api/info" -and $request.HttpMethod -eq "GET") {
+        elseif ($path -eq "/api/info") {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
             $uptime = 0
-            try { $uptime = [math]::Round((New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds) } catch {}
+            try { $uptime = [math]::Round((New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds) } catch { Write-Log "Info uptime calculation failed: $($_.Exception.Message)" "DEBUG" }
             $conn = ""
-            try { $conn = [string]$script:ConnectionMethod } catch {}
+            try { $conn = [string]$script:ConnectionMethod } catch { Write-Log "Info connection method failed: $($_.Exception.Message)" "DEBUG" }
             $wsCount = 0
-            try { $wsCount = [int]$script:WSClients.Count } catch {}
-            $info = "{`"method`":`"$conn`",`"uptime`":$uptime,`"ws_clients`":$wsCount,`"ps_version`":`"$($PSVersionTable.PSVersion.ToString())`",`"hostname`":`"$env:COMPUTERNAME`"}"
+            try { $wsCount = [int]$script:WSClients.Count } catch { Write-Log "Info WS count failed: $($_.Exception.Message)" "DEBUG" }
+            $info = @{
+                method = $conn
+                uptime = $uptime
+                ws_clients = $wsCount
+                ps_version = $PSVersionTable.PSVersion.ToString()
+                hostname = $env:COMPUTERNAME
+            } | ConvertTo-Json -Compress
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($info)
             $response.ContentType = "application/json"
             $response.ContentLength64 = $buffer.Length
             Send-Response $response $buffer "application/json"
         }
-        elseif ($path -eq "/stream" -and $request.HttpMethod -eq "GET") {
+        elseif ($path -eq "/api/export") {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
+            $data = Get-CurrentData
+            if (-not $data) {
+                $data = Get-LiveData
+            }
+            $exportObj = @{
+                exported_at = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+                hostname = $env:COMPUTERNAME
+                data = $data
+                thresholds = $script:AlertThresholds
+                version = "1.0"
+            }
+            $json = $exportObj | ConvertTo-Json -Depth 20 -Compress
+            $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
+            $response.ContentType = "application/json"
+            $response.ContentLength64 = $buffer.Length
+            Send-Response $response $buffer "application/json"
+        }
+        elseif ($path -eq "/stream") {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
             $upgrade = $request.Headers.Get("Upgrade")
             $secWebSocketKey = $request.Headers.Get("Sec-WebSocket-Key")
             
@@ -1465,13 +2064,16 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
                     }
                 } catch {
                     $script:ConnectionMethod = "sse"
+                    Write-Log "WebSocket upgrade failed: $($_.Exception.Message)" "DEBUG"
                 }
             } else {
                 try {
                     $response.ContentType = "text/event-stream"
                     $response.Headers.Add("Cache-Control", "no-cache")
                     $response.Headers.Add("Connection", "keep-alive")
-                    $response.Headers.Add("Access-Control-Allow-Origin", "*")
+                    if ($origin -and $origin -match '^http://(localhost|127\.0\.0\.1):\d+$') {
+                        $response.Headers.Set("Access-Control-Allow-Origin", $origin)
+                    }
                     $script:ConnectionMethod = "sse"
                     while ($listener.IsListening -and -not $script:shuttingDown) {
                         try {
@@ -1482,12 +2084,12 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
                                     if ($data) {
                                         $json = $data | ConvertTo-Json -Depth 20 -Compress
                                         $payload = [System.Text.Encoding]::UTF8.GetBytes("data: $json`n`n")
-                                        try { $response.OutputStream.Write($payload, 0, $payload.Length); $response.OutputStream.Flush() } catch { break }
+                                        try { $response.OutputStream.Write($payload, 0, $payload.Length); $response.OutputStream.Flush() } catch { Write-Log "SSE client disconnected: $($_.Exception.Message)" "DEBUG"; break }
                                     }
                                 }
                             }
                             Start-Sleep -Milliseconds 50
-                        } catch { break }
+                        } catch { Write-Log "SSE loop failed: $($_.Exception.Message)" "DEBUG"; break }
                     }
                 } catch { if ($script:DebugMode) { Write-Log "SSE error: $($_.Exception.Message)" "DEBUG" } }
                 $response.StatusCode = 200
@@ -1519,24 +2121,4 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
 }
 
 $shuttingDown = $false
-Register-EngineEvent -SourceIdentifier ([System.Management.Automation.PsEngineEvent]::Exiting) -Action {
-    $script:shuttingDown = $true
-    $listener.Stop()
-    Write-Host ""
-    Write-Host "[pcmon] Stopped." -ForegroundColor Yellow
-} | Out-Null
 #endregion
-
-# -- main --
-# pcmon ΓÇö Built from backend/src/ modules
-# DO NOT EDIT THIS FILE DIRECTLY ΓÇö edit backend/src/ instead and rebuild
-#Requires -Version 5.1
-# Entry point: dot-source all modules in dependency order
-. "$PSScriptRoot/src/00-config.ps1"
-. "$PSScriptRoot/src/01-logging.ps1"
-. "$PSScriptRoot/src/02-http-helpers.ps1"
-. "$PSScriptRoot/src/03-actions.ps1"
-. "$PSScriptRoot/src/04-snapshots.ps1"
-. "$PSScriptRoot/src/05-collectors.ps1"
-. "$PSScriptRoot/src/06-background.ps1"
-. "$PSScriptRoot/src/07-server.ps1"

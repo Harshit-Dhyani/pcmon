@@ -5,7 +5,9 @@ param(
     [switch]$Wallpaper,
     [switch]$Tray,
     [switch]$Debug,
-    [switch]$Help
+    [switch]$Help,
+    [ValidateRange(1, 65535)]
+    [int]$Port = 9876
 )
 
 if ($Help) {
@@ -44,16 +46,36 @@ if ($Wallpaper -and -not $Tray) {
 $ErrorActionPreference = "Continue"
 $script:ErrorCount = 0
 $HOSTNAME = "localhost"
-$Port = 9876
 $OPEN_BROWSER = -not ($NoOpen -or $ApiOnly)
+if ($Port -gt 65535) { $Port = 65535 }
+# Auto-bump the listener port when the requested one is already occupied.
+$listenerProbeSucceeded = $false
 for ($i = 0; $i -lt 20; $i++) {
-    $test = New-Object System.Net.HttpListener
-    $test.Prefixes.Add("http://${HOSTNAME}:$Port/")
-    try { $test.Start(); $test.Stop(); break } catch { $Port++; $test.Abort() }
+    $test = $null
+    try {
+        $test = New-Object System.Net.HttpListener
+        $test.Prefixes.Add("http://${HOSTNAME}:$Port/")
+        $test.Start()
+        $test.Stop()
+        $listenerProbeSucceeded = $true
+        break
+    } catch {
+        if ($null -eq $test) {
+            Write-Host "[pcmon] HttpListener is not available in this PowerShell host: $($_.Exception.Message)" -ForegroundColor Red
+            exit 1
+        }
+        $Port++
+        try { $test.Abort() } catch { Write-Host "[pcmon] Warning: listener probe cleanup failed: $($_.Exception.Message)" -ForegroundColor Yellow }
+    }
+}
+if (-not $listenerProbeSucceeded) {
+    Write-Host "[pcmon] Unable to reserve a local listener port starting from $($Port - 20)." -ForegroundColor Red
+    exit 1
 }
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WEB_DIR = Join-Path $SCRIPT_DIR "web"
-$LOG_FILE = Join-Path $env:TEMP "pcmon_errors.log"
+$DIST_DIR = Join-Path $SCRIPT_DIR "dist"
+$LOG_FILE = Join-Path $env:TEMP "pcmon_errors_$Port.log"
 
 $script:StartTime = Get-Date
 $script:CachedStatic = $null
@@ -70,19 +92,34 @@ $script:ConnectionMethod = "polling"
 $script:WSClients = [System.Collections.Generic.List[object]]::new()
 $script:WSLastSend = [DateTime]::MinValue
 $script:WSBroadcastInterval = 500
+# Session peaks are tracked in memory so the dashboard can show honest "max seen"
+# values without persisting machine state to disk.
+$script:SessionMaxCpuMhz = 0
+$script:SessionMaxCpuTempC = $null
+$script:SessionMaxCpuPowerW = $null
 $SNAPSHOTS_DIR = Join-Path $SCRIPT_DIR "snapshots"
 if (-not (Test-Path $SNAPSHOTS_DIR)) { New-Item -ItemType Directory -Path $SNAPSHOTS_DIR -Force | Out-Null }
-$cacheFile = Join-Path $env:TEMP "pcmon_live_cache.json"
+# Cache and log files are port-scoped so multiple local pcmon instances do not
+# overwrite each other's state.
+$cacheFile = Join-Path $env:TEMP "pcmon_live_cache_$Port.json"
 
 $PROTECTED_PROCESSES = @('System', 'Idle', 'csrss', 'smss', 'wininit', 'services', 'lsass', 'svchost', 'winlogon', 'dwm', 'explorer', 'taskhostw', 'sihost', 'ctfmon', 'fontdrvhost', 'Memory Compression')
+$PROCESS_GROUPS = @{
+    browser = @('msedge', 'arc', 'chrome', 'opera', 'brave', 'firefox', 'electron', 'librewolf')
+    dev_tools = @('node', 'bun', 'python', 'java', 'code', 'webstorm', 'rider', 'idea', 'pycharm', 'goland', 'datagrip', 'phpstorm', 'ruby', 'rust', 'cargo', 'opencode', 'codex', 'chatgpt', 'pieces', 'os-server')
+    security = @('msmpeng', 'malware', 'mbam', 'glasswire', 'portmaster', 'defender', 'avast', 'kaspersky', 'bitdefender', 'eset')
+}
 
 $script:AlertThresholds = @{
     ram_pct = 85
+    cpu_pct = 90
     commit_pct = 80
     pages_sec = 1000
     non_paged_mb = 1500
     disk_pct = 90
-    cpu_pct = 90
+    gpu_pct = 90
+    net_sent_kb = 50000
+    net_recv_kb = 50000
 }
 
 $configPath = Join-Path $SCRIPT_DIR "config.json"
@@ -92,6 +129,6 @@ if (Test-Path $configPath) {
         foreach ($key in $saved.PSObject.Properties.Name) {
             $script:AlertThresholds[$key] = $saved.$key
         }
-    } catch { }
+    } catch { Write-Host "[pcmon] Warning: config load failed: $($_.Exception.Message)" -ForegroundColor Yellow }
 }
 #endregion

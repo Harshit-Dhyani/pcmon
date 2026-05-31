@@ -39,10 +39,23 @@ function Save-Snapshot {
     return @{ id = $timestamp; ts = $snapshot.ts; label = $Label; filename = $filename }
 }
 
+function Test-SnapshotId {
+    param([string]$Id)
+    return ($Id -match '^\d{8}_\d{6}$')
+}
+
+function Get-SnapshotFileById {
+    param([string]$Id)
+    if (-not (Test-SnapshotId -Id $Id)) { return $null }
+    return Get-SnapshotFiles | Where-Object { $_.BaseName -eq "snapshot_$Id" } | Select-Object -First 1
+}
+
 function Compare-Snapshots {
     param([string]$SnapshotId)
-    $files = Get-SnapshotFiles
-    $snapshotFile = $files | Where-Object { $_.BaseName -eq "snapshot_$SnapshotId" } | Select-Object -First 1
+    if (-not (Test-SnapshotId -Id $SnapshotId)) {
+        return @{ error = "Invalid snapshot ID" }
+    }
+    $snapshotFile = Get-SnapshotFileById -Id $SnapshotId
     if (-not $snapshotFile) { return @{ error = "Snapshot not found" } }
     $snapshot = Get-Content $snapshotFile.FullName | ConvertFrom-Json
     if (Test-Path $cacheFile) {
@@ -97,7 +110,7 @@ function Compare-Snapshots {
         }
     }
     $snapProcs = @{}
-    foreach ($p in $snapshotData.top_ram) { $snapProcs[$p.name] = $p }
+    foreach ($p in $snapshot.top_ram) { $snapProcs[$p.name] = $p }
     $currProcs = @{}
     foreach ($p in $currentData.top_ram) { $currProcs[$p.name] = $p }
     $newProcs = @($currProcs.Keys | Where-Object { -not $snapProcs.ContainsKey($_) })

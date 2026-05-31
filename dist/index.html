@@ -1,0 +1,3189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!-- Built 2026-06-01 00:58:47 v1.0.0 | Source: src/web/src/ -->
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>PC Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ── Reset & Root ─────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* Background layers */
+  --bg:        #05070d;
+  --bg2:       #080c15;
+  --surface:   rgba(12, 18, 32, 0.7);
+  --surface2:  rgba(16, 24, 44, 0.6);
+  --glass:     rgba(255, 255, 255, 0.03);
+  --glass-hi:  rgba(255, 255, 255, 0.07);
+
+  /* Borders */
+  --border:    rgba(255, 255, 255, 0.07);
+  --border2:   rgba(255, 255, 255, 0.12);
+
+  /* Text */
+  --text:      #e2eeff;
+  --text2:     #8ba4cc;
+  --text3:     #3d5580;
+
+  /* Accent palette */
+  --ok:        #00f5b0;
+  --ok-dim:    rgba(0, 245, 176, 0.15);
+  --ok-glow:   rgba(0, 245, 176, 0.35);
+  --warn:      #ffbe3d;
+  --warn-dim:  rgba(255, 190, 61, 0.15);
+  --bad:       #ff4571;
+  --bad-dim:   rgba(255, 69, 113, 0.15);
+  --bad-glow:  rgba(255, 69, 113, 0.35);
+  --info:      #3d9eff;
+  --info-dim:  rgba(61, 158, 255, 0.15);
+  --info-glow: rgba(61, 158, 255, 0.3);
+  --accent:    #67b7ff;
+  --text-dim:  #8ba4cc;
+
+  /* Typography */
+  --mono: 'Geist Mono', monospace;
+  --sans: 'Outfit', sans-serif;
+
+  /* Misc */
+  --r:  10px;
+  --r2: 16px;
+  --blur: blur(20px);
+  --blur2: blur(40px);
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  overflow-x: hidden;
+  font-weight: 400;
+}
+
+/* Ambient background orbs */
+body::before, body::after {
+  content: '';
+  position: fixed;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+}
+body::before {
+  width: 600px; height: 600px;
+  top: -200px; left: -200px;
+  background: radial-gradient(circle, rgba(61,158,255,0.06) 0%, transparent 70%);
+}
+body::after {
+  width: 500px; height: 500px;
+  bottom: -150px; right: -150px;
+  background: radial-gradient(circle, rgba(0,245,176,0.05) 0%, transparent 70%);
+}
+
+/* ── Scrollbar ──────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+.hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  height: 54px;
+  background: rgba(5, 7, 13, 0.85);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 200;
+}
+
+.hdr-left { display: flex; align-items: center; gap: 14px; }
+
+.hdr-logo {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.hdr-logo em {
+  color: var(--ok);
+  font-style: normal;
+  text-shadow: 0 0 12px var(--ok-glow);
+}
+
+.pip {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 2px var(--ok-dim), 0 0 12px var(--ok-glow);
+  animation: blink 2.5s ease infinite;
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 2px var(--ok-dim), 0 0 12px var(--ok-glow); }
+  50%       { opacity: 0.5; box-shadow: 0 0 0 2px transparent, 0 0 4px transparent; }
+}
+
+.host-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text2);
+  background: var(--glass);
+  border: 1px solid var(--border);
+  padding: 3px 10px;
+  border-radius: 20px;
+  letter-spacing: 0.3px;
+}
+
+.hdr-right { display: flex; align-items: center; gap: 16px; }
+
+.route-links {
+  display: flex;
+  gap: 6px;
+  margin-right: 8px;
+}
+.route-links a {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text3);
+  text-decoration: none;
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border2);
+  transition: all 0.15s;
+}
+.route-links a:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(0, 210, 255, 0.1);
+}
+
+.ts {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text3);
+  min-width: 64px;
+  text-align: right;
+  letter-spacing: 0.5px;
+}
+
+.rf-lbl { font-size: 11px; color: var(--text3); }
+
+.rf-sel {
+  background: var(--glass);
+  border: 1px solid var(--border2);
+  color: var(--text2);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.rf-sel:focus { border-color: var(--info); }
+
+/* ── Nav ────────────────────────────────────────────────────────────── */
+.nav {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 0 24px;
+  background: rgba(5, 7, 13, 0.7);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  position: sticky;
+  top: 54px;
+  z-index: 190;
+}
+.nav::-webkit-scrollbar { height: 0; }
+
+.ntab {
+  padding: 11px 16px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.9px;
+  color: var(--text3);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.2s, border-color 0.2s;
+  user-select: none;
+  white-space: nowrap;
+  position: relative;
+}
+.ntab:hover { color: var(--text2); }
+.ntab.on {
+  color: var(--text);
+  border-bottom-color: var(--info);
+}
+.ntab.on::after {
+  content: '';
+  position: absolute;
+  bottom: -1px; left: 50%;
+  transform: translateX(-50%);
+  width: 40%;
+  height: 1px;
+  background: var(--info);
+  box-shadow: 0 0 8px var(--info-glow);
+}
+
+/* ── Alerts ─────────────────────────────────────────────────────────── */
+.alerts { padding: 12px 24px 0; display: flex; flex-direction: column; gap: 6px; }
+
+.al {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-radius: var(--r);
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid;
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+}
+.al.show { display: flex; }
+.al-bad  { background: var(--bad-dim);  border-color: rgba(255,69,113,0.25);  color: #ff8fa8; }
+.al-warn { background: var(--warn-dim); border-color: rgba(255,190,61,0.25); color: #ffd080; }
+
+/* ── Main ───────────────────────────────────────────────────────────── */
+.main { padding: 20px 24px 60px; position: relative; z-index: 1; }
+
+.pg { display: none; }
+.pg.on { display: block; animation: fadein 0.25s ease; }
+@keyframes fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* ── Summary Strip (stat cards) ────────────────────────────────────── */
+.strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+@media (max-width: 900px)  { .strip { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 480px)  { .strip { grid-template-columns: 1fr; } }
+
+.scard {
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border);
+  border-radius: var(--r2);
+  padding: 18px 20px 16px;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.4s, box-shadow 0.4s;
+}
+.scard::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--r2);
+  pointer-events: none;
+  transition: background 0.4s;
+}
+/* Glow accent top-right */
+.scard::after {
+  content: '';
+  position: absolute;
+  top: -40px; right: -40px;
+  width: 120px; height: 120px;
+  border-radius: 50%;
+  pointer-events: none;
+  transition: background 0.5s;
+}
+.scard.ok  { border-color: rgba(0,245,176,0.18); box-shadow: 0 0 30px -8px rgba(0,245,176,0.08); }
+.scard.ok::after  { background: radial-gradient(circle, rgba(0,245,176,0.12) 0%, transparent 70%); }
+.scard.ok::before { background: linear-gradient(135deg, rgba(0,245,176,0.04) 0%, transparent 60%); }
+
+.scard.warn { border-color: rgba(255,190,61,0.22); box-shadow: 0 0 30px -8px rgba(255,190,61,0.1); }
+.scard.warn::after  { background: radial-gradient(circle, rgba(255,190,61,0.14) 0%, transparent 70%); }
+.scard.warn::before { background: linear-gradient(135deg, rgba(255,190,61,0.05) 0%, transparent 60%); }
+
+.scard.bad  { border-color: rgba(255,69,113,0.25); box-shadow: 0 0 30px -8px rgba(255,69,113,0.12); }
+.scard.bad::after   { background: radial-gradient(circle, rgba(255,69,113,0.15) 0%, transparent 70%); }
+.scard.bad::before  { background: linear-gradient(135deg, rgba(255,69,113,0.06) 0%, transparent 60%); }
+
+.scard-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+
+.scard-lbl {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--text3);
+}
+
+.sbadge {
+  font-family: var(--mono);
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  padding: 2px 7px;
+  border-radius: 20px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  border: 1px solid;
+}
+.sbadge.show { opacity: 1; }
+.sbadge.ok   { background: var(--ok-dim);   color: var(--ok);   border-color: rgba(0,245,176,0.3); }
+.sbadge.warn { background: var(--warn-dim); color: var(--warn); border-color: rgba(255,190,61,0.3); }
+.sbadge.bad  { background: var(--bad-dim);  color: var(--bad);  border-color: rgba(255,69,113,0.3); }
+
+.sval {
+  font-family: var(--mono);
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -1.5px;
+  transition: color 0.4s;
+}
+.sval.ok   { color: var(--ok);   text-shadow: 0 0 20px var(--ok-glow); }
+.sval.warn { color: var(--warn); text-shadow: 0 0 20px rgba(255,190,61,0.4); }
+.sval.bad  { color: var(--bad);  text-shadow: 0 0 20px var(--bad-glow); }
+
+.strend {
+  font-size: 14px;
+  font-weight: 500;
+  margin-left: 6px;
+  color: var(--text-dim);
+  opacity: 0.8;
+}
+
+.ssub {
+  font-size: 11px;
+  color: var(--text3);
+  margin-top: 6px;
+  font-family: var(--mono);
+  line-height: 1.5;
+  min-height: 16px;
+}
+
+/* Track bar */
+.strack {
+  height: 3px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 2px;
+  margin-top: 14px;
+  overflow: hidden;
+}
+.sfill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.sfill.ok   { background: linear-gradient(90deg, rgba(0,245,176,0.5), var(--ok)); }
+.sfill.warn { background: linear-gradient(90deg, rgba(255,190,61,0.5), var(--warn)); }
+.sfill.bad  { background: linear-gradient(90deg, var(--warn), var(--bad)); }
+
+/* Sparkline */
+.spark {
+  height: 32px;
+  margin-top: 10px;
+  overflow: hidden;
+  position: relative;
+}
+.spark svg {
+  width: 100%; height: 100%;
+  display: block;
+}
+.spark-line-ok   { stroke: var(--ok);   filter: drop-shadow(0 0 3px var(--ok-glow)); }
+.spark-line-warn { stroke: var(--warn); filter: drop-shadow(0 0 3px rgba(255,190,61,0.4)); }
+.spark-line-bad  { stroke: var(--bad);  filter: drop-shadow(0 0 3px var(--bad-glow)); }
+.spark-line-info { stroke: var(--info); filter: drop-shadow(0 0 3px var(--info-glow)); }
+
+/* ── Grids ──────────────────────────────────────────────────────────── */
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+.grid3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 1000px) { .grid2 { grid-template-columns: 1fr; } }
+@media (max-width: 700px)  { .grid3 { grid-template-columns: 1fr 1fr; } }
+
+/* ── Panel ──────────────────────────────────────────────────────────── */
+.pnl {
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border);
+  border-radius: var(--r2);
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+.pnl:hover { border-color: var(--border2); }
+
+.pnl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--glass);
+}
+
+.pnl-title {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--info);
+}
+
+.pnl-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text3);
+  background: var(--glass);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+
+.pnl-body { padding: 14px 16px; }
+
+/* ── Table ──────────────────────────────────────────────────────────── */
+.tbl-scroll { max-height: 380px; overflow-y: auto; }
+
+table { width: 100%; border-collapse: collapse; }
+
+thead th {
+  position: sticky;
+  top: 0;
+  background: rgba(8, 12, 21, 0.95);
+  backdrop-filter: var(--blur);
+  padding: 9px 12px;
+  text-align: left;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.9px;
+  color: var(--text3);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--mono);
+}
+thead th:hover { color: var(--text2); }
+thead th.asc::after  { content: ' ↑'; color: var(--info); }
+thead th.desc::after { content: ' ↓'; color: var(--info); }
+
+tbody tr {
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  transition: background 0.12s;
+}
+tbody tr:last-child { border-bottom: none; }
+tbody tr:hover { background: rgba(61,158,255,0.04); }
+
+tbody td {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text2);
+}
+
+.tn {
+  font-weight: 600;
+  color: var(--text);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.mn {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text3);
+}
+
+.ok   { color: var(--ok)   !important; }
+.warn { color: var(--warn) !important; }
+.bad  { color: var(--bad)  !important; }
+.dim  { color: var(--text3)!important; }
+
+/* Mini bar in table */
+.mbar { width: 56px; height: 3px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden; }
+.mbar-f { height: 100%; border-radius: 2px; }
+.mbar-f.ok   { background: var(--ok); }
+.mbar-f.warn { background: var(--warn); }
+.mbar-f.bad  { background: linear-gradient(90deg, var(--warn), var(--bad)); }
+
+/* ── Drive Cards ────────────────────────────────────────────────────── */
+.drive-card {
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  transition: border-color 0.2s;
+}
+.drive-card:last-child { margin-bottom: 0; }
+.drive-card:hover { border-color: var(--border2); }
+
+.drive-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px; }
+.drive-letter { font-family: var(--mono); font-weight: 700; font-size: 14px; color: var(--text); }
+.drive-pct { font-family: var(--mono); font-size: 12px; font-weight: 600; }
+.drive-label { font-size: 10px; color: var(--text3); margin-bottom: 8px; }
+.drive-bar { height: 4px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden; margin-bottom: 5px; }
+.drive-fill { height: 100%; border-radius: 2px; transition: width 0.6s ease; }
+.drive-fill.ok   { background: linear-gradient(90deg, rgba(0,245,176,0.6), var(--ok)); }
+.drive-fill.warn { background: linear-gradient(90deg, rgba(255,190,61,0.6), var(--warn)); }
+.drive-fill.bad  { background: linear-gradient(90deg, var(--warn), var(--bad)); }
+.drive-meta { font-size: 10px; color: var(--text3); font-family: var(--mono); }
+
+/* ── I/O Cards ──────────────────────────────────────────────────────── */
+.io-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+
+.io-card {
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 12px 14px;
+  transition: border-color 0.2s;
+}
+.io-card:hover { border-color: var(--border2); }
+
+.io-lbl, .io-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text3);
+  margin-bottom: 6px;
+  display: block;
+}
+.io-row { display: flex; justify-content: space-between; align-items: baseline; }
+
+.io-val {
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  display: block;
+}
+.io-unit { font-size: 10px; color: var(--text3); margin-left: 2px; }
+
+/* ── Pool Cards ─────────────────────────────────────────────────────── */
+.pool-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 18px; }
+
+.pool-card {
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border);
+  border-radius: var(--r2);
+  padding: 16px 18px;
+}
+
+.pool-lbl {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--info);
+  margin-bottom: 8px;
+}
+.pool-val { font-family: var(--mono); font-size: 26px; font-weight: 700; line-height: 1.2; color: var(--text); }
+.pool-desc { font-size: 11px; color: var(--text3); margin-top: 6px; line-height: 1.5; }
+
+/* ── GPU ────────────────────────────────────────────────────────────── */
+.gpu-card {
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 14px 16px;
+  margin-bottom: 8px;
+}
+.gpu-card:last-child { margin-bottom: 0; }
+.gpu-name { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 8px; word-break: break-word; }
+.gpu-stat { font-size: 11px; color: var(--text3); margin-bottom: 3px; }
+.gpu-bar { height: 4px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden; margin-top: 8px; }
+.gpu-fill { height: 100%; background: linear-gradient(90deg, var(--info), var(--ok)); border-radius: 2px; }
+#pg-gpu.gpu-unavailable { opacity: 0.5; }
+
+/* ── Groups ─────────────────────────────────────────────────────────── */
+.insight {
+  padding: 10px 14px;
+  border-left: 2px solid var(--info);
+  background: var(--info-dim);
+  border-radius: 0 var(--r) var(--r) 0;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text2);
+  line-height: 1.5;
+}
+.insight:last-child { margin-bottom: 0; }
+.insight.warn { border-left-color: var(--warn); background: rgba(255, 184, 77, 0.12); color: var(--text); }
+.insight.bad { border-left-color: var(--bad); background: rgba(255, 107, 107, 0.14); color: var(--text); }
+.insight.ok { border-left-color: var(--ok); background: rgba(81, 207, 102, 0.10); }
+.issue-hero {
+  margin-bottom: 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--r2);
+  background: linear-gradient(135deg, rgba(64, 145, 255, 0.12), rgba(255, 184, 77, 0.10));
+}
+.issue-kicker {
+  font-size: 10px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--text3);
+  margin-bottom: 6px;
+}
+.issue-title {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.issue-desc {
+  font-size: 12px;
+  color: var(--text2);
+  line-height: 1.5;
+}
+
+/* ── System Summary ─────────────────────────────────────────────────── */
+.sys-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+}
+.sys-row:last-child { border-bottom: none; }
+.sys-row span:first-child { color: var(--text3); font-size: 11px; }
+.sys-row span:last-child  { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--text); }
+
+/* ── Search ─────────────────────────────────────────────────────────── */
+.sbar {
+  background: var(--glass);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 12px;
+  padding: 7px 12px;
+  border-radius: var(--r);
+  outline: none;
+  width: 200px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.sbar:focus {
+  border-color: var(--info);
+  box-shadow: 0 0 0 2px var(--info-dim);
+}
+.sbar::placeholder { color: var(--text3); }
+
+/* ── Section head ───────────────────────────────────────────────────── */
+.sec-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+
+/* ── Footer note ────────────────────────────────────────────────────── */
+.footer-note {
+  font-size: 11px;
+  color: var(--text3);
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Disk page old ──────────────────────────────────────────────────── */
+.disk-item { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.disk-item:last-child { border-bottom: none; }
+.disk-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.disk-name { font-family: var(--mono); font-weight: 700; font-size: 12px; }
+.disk-pct  { font-family: var(--mono); font-size: 11px; }
+.disk-track { height: 4px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden; margin-bottom: 4px; }
+.disk-fill  { height: 100%; border-radius: 2px; transition: width 0.6s ease; }
+.disk-fill.ok   { background: var(--ok); }
+.disk-fill.warn { background: var(--warn); }
+.disk-fill.bad  { background: linear-gradient(90deg,var(--warn),var(--bad)); }
+.disk-meta { font-size: 10px; color: var(--text3); font-family: var(--mono); display: flex; justify-content: space-between; }
+
+/* ── Note ───────────────────────────────────────────────────────────── */
+.note { font-size: 12px; color: var(--text3); font-style: italic; }
+
+/* ── Skeleton Loader ────────────────────────────────────────────────── */
+.sk {
+  background: linear-gradient(90deg,
+    rgba(255,255,255,0.04) 25%,
+    rgba(255,255,255,0.08) 50%,
+    rgba(255,255,255,0.04) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease infinite;
+  border-radius: 4px;
+}
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.sk-val   { width: 80px;  height: 36px; border-radius: 6px; margin-bottom: 6px; }
+.sk-sub   { width: 120px; height: 11px; border-radius: 4px; margin-bottom: 14px; }
+.sk-bar   { width: 100%;  height: 3px;  border-radius: 2px; margin-top: 4px; }
+.sk-spark { width: 100%;  height: 32px; border-radius: 4px; margin-top: 8px; }
+.sk-row   { width: 100%;  height: 32px; border-radius: 4px; margin-bottom: 4px; }
+.sk-title { width: 140px; height: 10px; border-radius: 4px; }
+.sk-badge { width: 50px;  height: 18px; border-radius: 20px; }
+.sk-text  { height: 11px; border-radius: 3px; }
+
+/* Stagger skeletons */
+.sk:nth-child(2) { animation-delay: 0.1s; }
+.sk:nth-child(3) { animation-delay: 0.2s; }
+.sk:nth-child(4) { animation-delay: 0.3s; }
+
+/* Scard skeleton state */
+.scard.loading .sval    { opacity: 0; }
+.scard.loading .ssub    { opacity: 0; }
+.scard.loading .sbadge  { opacity: 0; }
+.scard.loading .strack  { opacity: 0; }
+.scard.loading .spark   { opacity: 0; }
+.scard.loading::after   { opacity: 0; }
+.scard.loading .sk      { display: block; }
+.scard .sk              { display: none; }
+
+/* spark big on disk/activity */
+#disk-spk, #net-spk { height: 60px; }
+#disk-spk .spark-line, #net-spk .spark-line { stroke-width: 1.5; }
+
+/* ── Debug / Error Styles ─────────────────────────────────────── */
+.err-banner {
+  background: var(--bad-dim);
+  border: 1px solid var(--bad);
+  border-radius: var(--r);
+  padding: 8px 12px;
+  color: var(--bad);
+  font-size: 12px;
+}
+.err-banner a { color: var(--accent); }
+
+.err-entry {
+  display: flex;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  align-items: flex-start;
+}
+.err-entry:last-child { border-bottom: none; }
+.err-time { color: var(--text3); min-width: 70px; }
+.err-type {
+  background: var(--bad-dim);
+  color: var(--bad);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  text-transform: uppercase;
+}
+.err-entry.fetch .err-type { background: var(--warn-dim); color: var(--warn); }
+.err-entry.promise .err-type { background: var(--info-dim); color: var(--info); }
+.err-msg { color: var(--text); flex: 1; word-break: break-all; }
+
+#js-err-count {
+  background: var(--bad-dim);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+}
+
+/* ── Snapshots Styles ───────────────────────────────────────────── */
+.snap-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px;
+  background: var(--surface);
+  border-radius: var(--r);
+}
+.snap-msg {
+  color: var(--ok);
+  font-size: 12px;
+}
+.snap-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+#pg-snapshots .pnl { margin-bottom: 0; }
+#snapshots-tbl td, #snapshots-tbl th {
+  padding: 8px 12px;
+  font-size: 12px;
+}
+#snapshots-tbl tr.selected {
+  background: var(--info-dim);
+}
+.compare-summary {
+  margin-bottom: 12px;
+  padding: 8px;
+  background: var(--glass);
+  border-radius: var(--r);
+  font-size: 12px;
+}
+.compare-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.compare-name { color: var(--text2); }
+.compare-diff { font-family: var(--mono); font-weight: 500; }
+.compare-procs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.compare-procs span {
+  background: var(--glass);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--text2);
+}
+.btn {
+  padding: 8px 14px;
+  font-size: 12px;
+  background: var(--glass);
+  color: var(--text);
+  border: 1px solid var(--border2);
+  border-radius: var(--r);
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, color 0.2s;
+}
+.btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(103,183,255,0.08);
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 11px;
+  background: var(--info-dim);
+  color: var(--info);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.btn-sm:hover { background: var(--info); color: var(--bg); }
+.btn-primary {
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  padding: 8px 16px;
+  border-radius: var(--r);
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-primary:hover { background: #4db3ff; }
+
+
+
+.threshold-row { display:flex; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid var(--border); }
+.threshold-row:last-child { border-bottom: none; }
+.threshold-row label { flex:1; font-size:13px; color: var(--text2); }
+.threshold-row input[type="number"] { text-align:right; }
+.threshold-unit { color: var(--text3); font-size:12px; min-width:30px; }
+@media (max-width: 900px) {
+  .snap-controls { flex-wrap: wrap; }
+  .snap-grid { grid-template-columns: 1fr; }
+  .io-strip { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 560px) {
+  .io-strip { grid-template-columns: 1fr; }
+  .hdr { padding: 0 12px; }
+  .main, .alerts, .nav { padding-left: 12px; padding-right: 12px; }
+}
+
+</style>
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────────────── -->
+<header class="hdr">
+  <div class="hdr-left">
+    <div class="pip"></div>
+    <div class="hdr-logo">PC&nbsp;<em>Monitor</em></div>
+    <div class="host-badge" id="hdr-host">—</div>
+  </div>
+  <div class="hdr-right">
+    <div class="route-links">
+      <a href="/data" target="_blank" rel="noopener" title="/data">data</a>
+      <a href="/health" target="_blank" rel="noopener" title="/health">health</a>
+      <a href="/errors" target="_blank" rel="noopener" title="/errors">errors</a>
+      <a href="/debug" target="_blank" rel="noopener" title="/debug">debug</a>
+      <a href="/logs" target="_blank" rel="noopener" title="/logs">logs</a>
+    </div>
+    <span class="rf-lbl">Refresh</span>
+    <select class="rf-sel" id="rf-sel">
+      <option value="500" selected>500 ms</option>
+      <option value="1000">1 s</option>
+      <option value="2000">2 s</option>
+      <option value="5000">5 s</option>
+      <option value="10000">10 s</option>
+    </select>
+    <div class="ts" id="ts">--:--:--</div>
+  </div>
+</header>
+
+<!-- ── Nav ────────────────────────────────────────────────────────── -->
+<nav class="nav">
+  <div class="ntab on" data-page="overview">Overview</div>
+  <div class="ntab" data-page="ram">RAM</div>
+  <div class="ntab" data-page="cpu">CPU</div>
+  <div class="ntab" data-page="disk">Disk &amp; I/O</div>
+  <div class="ntab" data-page="gpu">GPU</div>
+  <div class="ntab" data-page="groups">Groups</div>
+  <div class="ntab" data-page="suspicious">Suspicious</div>
+  <div class="ntab" data-page="services">Services</div>
+  <div class="ntab" data-page="system">System</div>
+  <div class="ntab" data-page="procs">All Processes</div>
+  <div class="ntab" data-page="snapshots">Snapshots</div>
+  <div class="ntab" data-page="debug">Debug</div>
+  <div class="ntab" data-page="settings">⚙ Settings</div>
+</nav>
+
+<!-- ── Alerts ─────────────────────────────────────────────────────── -->
+<div class="alerts">
+  <div class="al al-bad"  id="al-pg"><span>⚠</span><span>Page faults spiking —&nbsp;<span id="al-pg-t"></span>/s. Possible memory pressure.</span></div>
+  <div class="al al-warn" id="al-cm"><span>⚠</span><span>Commit charge high —&nbsp;<span id="al-cm-t"></span>%. System may be over-committed.</span></div>
+  <div class="al al-warn" id="al-np"><span>⚠</span><span>Non-paged pool elevated —&nbsp;<span id="al-np-t"></span>&nbsp;MB. Possible driver leak.</span></div>
+  <div class="al al-warn" id="al-gpu"><span>⚠</span><span>GPU 3D engine heavy —&nbsp;<span id="al-gpu-t"></span>%.</span></div>
+</div>
+
+<!-- ── Pages ──────────────────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- ── OVERVIEW ─────────────────────────────────────────────────── -->
+  <div id="pg-overview" class="pg on">
+    <div class="strip">
+
+      <!-- RAM card -->
+      <div class="scard loading" id="sc-ram">
+        <div class="scard-top">
+          <span class="scard-lbl">RAM</span>
+          <span class="sbadge" id="sb-ram"></span>
+        </div>
+        <div class="sk sk-val"></div>
+        <div class="sk sk-sub"></div>
+        <div class="sval" id="sv-ram">—<span class="strend" id="sv-ram-trend"></span></div>
+        <div class="ssub" id="ss-ram">—</div>
+        <div class="strack"><div class="sfill" id="sf-ram"></div></div>
+        <div class="sk sk-spark"></div>
+        <canvas class="spark" id="spk-ram"></canvas>
+      </div>
+
+      <!-- CPU card -->
+      <div class="scard loading" id="sc-cpu">
+        <div class="scard-top">
+          <span class="scard-lbl">CPU</span>
+          <span class="sbadge" id="sb-cpu"></span>
+        </div>
+        <div class="sk sk-val"></div>
+        <div class="sk sk-sub"></div>
+        <div class="sval" id="sv-cpu">—<span class="strend" id="sv-cpu-trend"></span></div>
+        <div class="ssub">All logical cores</div>
+        <div class="strack"><div class="sfill" id="sf-cpu"></div></div>
+        <div class="sk sk-spark"></div>
+        <canvas class="spark" id="spk-cpu"></canvas>
+      </div>
+
+      <!-- Disk card -->
+      <div class="scard loading" id="sc-disk">
+        <div class="scard-top">
+          <span class="scard-lbl">Disk</span>
+          <span class="sbadge" id="sb-disk"></span>
+        </div>
+        <div class="sk sk-val"></div>
+        <div class="sk sk-sub"></div>
+        <div class="sval" id="sv-disk">—<span class="strend" id="sv-disk-trend"></span></div>
+        <div class="ssub" id="ss-disk">—</div>
+        <div class="strack"><div class="sfill" id="sf-disk"></div></div>
+        <div class="sk sk-spark"></div>
+        <canvas class="spark" id="spk-disk"></canvas>
+      </div>
+
+      <!-- Commit card -->
+      <div class="scard loading" id="sc-cm">
+        <div class="scard-top">
+          <span class="scard-lbl">Commit</span>
+          <span class="sbadge" id="sb-cm"></span>
+        </div>
+        <div class="sk sk-val"></div>
+        <div class="sk sk-sub"></div>
+        <div class="sval" id="sv-cm">—<span class="strend" id="sv-cm-trend"></span></div>
+        <div class="ssub" id="ss-cm">—</div>
+        <div class="strack"><div class="sfill" id="sf-cm"></div></div>
+        <div class="sk sk-spark"></div>
+        <canvas class="spark" id="spk-cm"></canvas>
+      </div>
+
+    </div><!-- /strip -->
+
+    <div class="grid2">
+      <!-- Top processes -->
+      <div class="pnl">
+        <div class="pnl-head">
+          <span class="pnl-title">Top Processes — RAM</span>
+          <span class="pnl-badge" id="ov-pc">
+            <span class="sk sk-badge" style="display:inline-block;width:70px;height:16px"></span>
+          </span>
+          <button class="btn-sm" onclick="copyTableToClipboard('ov-tbl')">Copy</button>
+        </div>
+        <div class="tbl-scroll" id="ov-tbl-wrap">
+          <!-- Skeleton rows -->
+          <div style="padding:10px 14px;display:flex;flex-direction:column;gap:6px" id="ov-tbl-sk">
+            <div class="sk sk-row"></div><div class="sk sk-row"></div>
+            <div class="sk sk-row"></div><div class="sk sk-row"></div>
+            <div class="sk sk-row"></div>
+          </div>
+          <table id="ov-tbl" style="display:none"></table>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <!-- Disk drives -->
+        <div class="pnl">
+          <div class="pnl-head"><span class="pnl-title">Disk Drives</span></div>
+          <div class="pnl-body" id="ov-disks-wrap">
+            <div id="ov-disks-sk">
+              <div class="sk sk-row"></div>
+              <div class="sk sk-row" style="margin-top:6px"></div>
+            </div>
+            <div id="ov-disks" style="display:none"></div>
+          </div>
+        </div>
+        <!-- I/O -->
+        <div class="pnl">
+          <div class="pnl-head"><span class="pnl-title">I/O &amp; Network</span></div>
+          <div class="pnl-body" id="ov-io-wrap">
+            <div id="ov-io-sk" class="io-strip">
+              <div class="sk" style="height:52px;border-radius:8px"></div>
+              <div class="sk" style="height:52px;border-radius:8px"></div>
+            </div>
+            <div class="io-strip" id="ov-io" style="display:none"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pnl" style="margin-top:14px">
+      <div class="pnl-head"><span class="pnl-title">Current Issues</span></div>
+      <div class="pnl-body">
+        <!-- Lead with the single highest-signal issue so the user does not have
+             to scan every card before seeing the likely bottleneck. -->
+        <div class="issue-hero" id="issue-hero">
+          <div class="issue-kicker">Main bottleneck</div>
+          <div class="issue-title" id="issue-primary-title">Waiting for live data…</div>
+          <div class="issue-desc" id="issue-primary-desc">pcmon will surface the most important issue first.</div>
+        </div>
+        <div id="insights-list">
+          <div class="note">Waiting for system insights…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── RAM ──────────────────────────────────────────────────────── -->
+  <div id="pg-ram" class="pg">
+    <div class="strip">
+      <div class="scard loading" id="r-sc-ram">
+        <div class="scard-top"><span class="scard-lbl">RAM In Use</span><span class="sbadge" id="r-sb-ram"></span></div>
+        <div class="sk sk-val"></div><div class="sk sk-sub"></div>
+        <div class="sval" id="r-sv-ram">—</div>
+        <div class="ssub" id="r-ss-ram">—</div>
+        <div class="strack"><div class="sfill" id="r-sf-ram"></div></div>
+      </div>
+      <div class="scard ok">
+        <div class="scard-top"><span class="scard-lbl">Available</span></div>
+        <div class="sval ok" id="r-avail">—</div>
+        <div class="ssub">MB free physical RAM</div>
+      </div>
+      <div class="scard loading" id="r-sc-cm">
+        <div class="scard-top"><span class="scard-lbl">Commit Charge</span><span class="sbadge" id="r-sb-cm"></span></div>
+        <div class="sk sk-val"></div><div class="sk sk-sub"></div>
+        <div class="sval" id="r-sv-cm">—</div>
+        <div class="ssub" id="r-ss-cm">—</div>
+        <div class="strack"><div class="sfill" id="r-sf-cm"></div></div>
+      </div>
+      <div class="scard loading" id="r-sc-pg">
+        <div class="scard-top"><span class="scard-lbl">Pages / sec</span></div>
+        <div class="sk sk-val"></div><div class="sk sk-sub"></div>
+        <div class="sval" id="r-sv-pg">—</div>
+        <div class="ssub" id="r-ss-pg">—</div>
+      </div>
+    </div>
+
+    <div class="pool-grid">
+      <div class="pool-card">
+        <div class="pool-lbl">Paged Pool</div>
+        <div class="pool-val" id="r-paged">—</div>
+        <div class="pool-desc">Kernel memory that can page to disk.</div>
+      </div>
+      <div class="pool-card">
+        <div class="pool-lbl">Non-Paged Pool</div>
+        <div class="pool-val" id="r-nonpaged">—</div>
+        <div class="pool-desc">Cannot be paged. Growing = driver leak.</div>
+      </div>
+    </div>
+
+    <div class="pnl">
+      <div class="pnl-head">
+        <span class="pnl-title">Top 30 by Private Memory</span>
+        <input class="sbar" id="s-ram" placeholder="Filter processes…">
+        <button class="btn-sm" onclick="copyTableToClipboard('r-tbl')">Copy</button>
+      </div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="r-tbl-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+        </div>
+        <table id="r-tbl" style="display:none"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CPU ──────────────────────────────────────────────────────── -->
+  <div id="pg-cpu" class="pg">
+    <div class="strip">
+      <div class="scard loading" id="c-sc-cpu" style="grid-column:span 2">
+        <div class="scard-top"><span class="scard-lbl">CPU Total</span><span class="sbadge" id="c-sb-cpu"></span></div>
+        <div class="sk sk-val"></div><div class="sk sk-sub"></div>
+        <div class="sval" id="c-sv-cpu">—</div>
+        <div class="ssub">All logical cores combined</div>
+        <div class="strack"><div class="sfill" id="c-sf-cpu"></div></div>
+        <canvas class="spark" id="spk-cpu2"></canvas>
+      </div>
+      <div class="scard loading" id="c-sc-pg">
+        <div class="scard-top"><span class="scard-lbl">Pages / sec</span></div>
+        <div class="sk sk-val"></div><div class="sk sk-sub"></div>
+        <div class="sval" id="c-sv-pg">—</div>
+        <div class="ssub">RAM-to-disk swap load</div>
+      </div>
+      <div class="scard ok">
+        <div class="scard-top"><span class="scard-lbl">Disk Queue</span></div>
+        <div class="sval ok" id="c-queue">—</div>
+        <div class="ssub">Pending I/O requests</div>
+      </div>
+    </div>
+
+    <div class="pnl" style="margin-bottom:16px">
+      <div class="pnl-head"><span class="pnl-title">CPU Details</span></div>
+      <div class="pnl-body" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">
+        <div class="sys-row"><span>Model</span><span id="cpu-name">—</span></div>
+        <div class="sys-row"><span>Sockets / Cores / Logical</span><span id="cpu-topology">—</span></div>
+        <div class="sys-row"><span>Base / Current Clock</span><span id="cpu-clocks">—</span></div>
+        <div class="sys-row"><span>Session Max Clock</span><span id="cpu-max-clock">—</span></div>
+        <div class="sys-row"><span>Temperature</span><span id="cpu-temp">—</span></div>
+        <div class="sys-row"><span>Package Power</span><span id="cpu-power">—</span></div>
+      </div>
+    </div>
+
+    <div class="pnl">
+      <div class="pnl-head"><span class="pnl-title">Top 20 by CPU Time</span><button class="btn-sm" onclick="copyTableToClipboard('c-tbl')">Copy</button></div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="c-tbl-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="c-tbl" style="display:none"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DISK & I/O ────────────────────────────────────────────────── -->
+  <div id="pg-disk" class="pg">
+    <div id="disk-io-wrap" style="margin-bottom:16px">
+      <div class="io-strip" id="disk-io-sk">
+        <div class="sk" style="height:68px;border-radius:10px"></div>
+        <div class="sk" style="height:68px;border-radius:10px"></div>
+        <div class="sk" style="height:68px;border-radius:10px"></div>
+        <div class="sk" style="height:68px;border-radius:10px"></div>
+      </div>
+      <div class="io-strip" id="disk-io-strip" style="display:none"></div>
+    </div>
+
+    <div class="grid2">
+      <div class="pnl">
+        <div class="pnl-head"><span class="pnl-title">Drives</span></div>
+        <div class="pnl-body" id="disk-drives-wrap">
+          <div id="disk-drives-sk">
+            <div class="sk sk-row"></div>
+            <div class="sk sk-row" style="margin-top:6px"></div>
+          </div>
+          <div id="disk-drives" style="display:none"></div>
+        </div>
+      </div>
+
+      <div class="pnl">
+        <div class="pnl-head"><span class="pnl-title">Activity History</span></div>
+        <div class="pnl-body" style="display:flex;flex-direction:column;gap:20px">
+          <div>
+            <div style="font-size:9px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;font-weight:700">Disk Activity %</div>
+            <canvas class="spark" id="disk-spk" style="height:60px;width:100%;display:block"></canvas>
+          </div>
+          <div>
+            <div style="font-size:9px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;font-weight:700">Network Activity (KB/s)</div>
+            <canvas class="spark" id="net-spk" style="height:60px;width:100%;display:block"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── GPU ──────────────────────────────────────────────────────── -->
+  <div id="pg-gpu" class="pg">
+    <div class="strip">
+      <div class="scard" id="g-sc-avail">
+        <div class="scard-top"><span class="scard-lbl">GPU Available</span></div>
+        <div class="sval" id="g-avail">—</div>
+        <div class="ssub" id="g-status">—</div>
+      </div>
+      <div class="scard" id="g-sc-3d">
+        <div class="scard-top"><span class="scard-lbl">3D Engine</span></div>
+        <div class="sval" id="g-3d">—</div>
+      </div>
+      <div class="scard" id="g-sc-vdec">
+        <div class="scard-top"><span class="scard-lbl">Video Decode</span></div>
+        <div class="sval" id="g-vdec">—</div>
+      </div>
+      <div class="scard" id="g-sc-venc">
+        <div class="scard-top"><span class="scard-lbl">Video Encode</span></div>
+        <div class="sval" id="g-venc">—</div>
+      </div>
+    </div>
+    <div class="pnl">
+      <div class="pnl-head"><span class="pnl-title">GPU Adapters</span></div>
+      <div class="pnl-body" id="gpu-adapters-wrap">
+        <div id="gpu-adapters-sk">
+          <div class="sk sk-row"></div>
+        </div>
+        <div id="gpu-adapters" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── GROUPS ───────────────────────────────────────────────────── -->
+  <div id="pg-groups" class="pg">
+    <div class="strip">
+      <div class="scard" id="grp-browser">
+        <div class="scard-top"><span class="scard-lbl">Browser / Electron</span></div>
+        <div class="sval" id="grp-browser-val">—</div>
+        <div class="ssub" id="grp-browser-count">0 processes</div>
+      </div>
+      <div class="scard" id="grp-dev">
+        <div class="scard-top"><span class="scard-lbl">Dev Tools</span></div>
+        <div class="sval" id="grp-dev-val">—</div>
+        <div class="ssub" id="grp-dev-count">0 processes</div>
+      </div>
+      <div class="scard" id="grp-sec">
+        <div class="scard-top"><span class="scard-lbl">Security Tools</span></div>
+        <div class="sval" id="grp-sec-val">—</div>
+        <div class="ssub" id="grp-sec-count">0 processes</div>
+      </div>
+    </div>
+    <div class="pnl">
+      <div class="pnl-head"><span class="pnl-title">Group Insights</span></div>
+      <div class="pnl-body" id="group-insights-wrap">
+        <div id="group-insights-sk">
+          <div class="sk sk-row"></div>
+          <div class="sk sk-row" style="margin-top:6px"></div>
+        </div>
+        <div id="group-insights" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SUSPICIOUS ───────────────────────────────────────────────── -->
+  <div id="pg-suspicious" class="pg">
+    <div class="pnl">
+      <div class="pnl-head">
+        <span class="pnl-title">Suspicious / Dev / Browser / Security</span>
+        <span class="pnl-badge" id="sus-count">0</span>
+        <button class="btn-sm" onclick="copyTableToClipboard('sus-tbl')">Copy</button>
+      </div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="sus-tbl-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="sus-tbl" style="display:none"></table>
+      </div>
+      <div class="footer-note">Groups: Node, Bun, browsers, JetBrains IDEs, AI helpers, Defender, Malwarebytes, GlassWire, Portmaster, VMware, NVIDIA</div>
+    </div>
+  </div>
+
+  <!-- ── SERVICES ─────────────────────────────────────────────────── -->
+  <div id="pg-services" class="pg">
+    <div class="pnl" style="margin-bottom:16px">
+      <div class="pnl-head"><span class="pnl-title">Heavy Services (top RAM PIDs)</span></div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="svc-tbl-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="svc-tbl" style="display:none"></table>
+      </div>
+    </div>
+    <div class="pnl">
+      <div class="pnl-head"><span class="pnl-title">Startup Items</span></div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="startup-tbl-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+        </div>
+        <table id="startup-tbl" style="display:none"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SYSTEM ───────────────────────────────────────────────────── -->
+  <div id="pg-system" class="pg">
+    <div class="pnl" style="margin-bottom:16px">
+      <div class="pnl-head"><span class="pnl-title">System Summary</span></div>
+      <div class="pnl-body" id="sys-summary-wrap">
+        <div id="sys-summary-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row" style="margin-top:6px"></div>
+          <div class="sk sk-row" style="margin-top:6px"></div>
+        </div>
+        <div id="sys-summary" style="display:none"></div>
+      </div>
+    </div>
+    <div class="pnl" style="margin-bottom:16px">
+      <div class="pnl-head"><span class="pnl-title">Page File</span></div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="pagefile-tbl-sk">
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="pagefile-tbl" style="display:none"></table>
+      </div>
+    </div>
+    <div class="pnl">
+      <div class="pnl-head"><span class="pnl-title">PowerShell Profiles</span></div>
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="profiles-tbl-sk">
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="profiles-tbl" style="display:none"></table>
+      </div>
+    </div>
+    <div class="pnl" style="margin-top:16px">
+      <div class="pnl-head"><span class="pnl-title">Network Adapters</span></div>
+      <!-- The adapter table is intentionally on the System page because it is
+           machine inventory plus current link state, not just a live throughput chart. -->
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="net-tbl-sk">
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="net-tbl" style="display:none"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ALL PROCESSES ────────────────────────────────────────────── -->
+  <div id="pg-procs" class="pg">
+    <div class="sec-head" style="margin-bottom:14px">
+      <input class="sbar" id="s-all" placeholder="Filter by name…" style="width:260px">
+      <span class="pnl-badge" id="all-pc">—</span>
+      <button class="btn-sm" onclick="copyTableToClipboard('all-tbl')">Copy</button>
+    </div>
+    <div class="pnl">
+      <div class="tbl-scroll" style="max-height:600px">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="all-tbl-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div><div class="sk sk-row"></div>
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="all-tbl" style="display:none"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SNAPSHOTS ─────────────────────────────────────────────────── -->
+  <div id="pg-snapshots" class="pg">
+    <div class="snap-controls" id="snap-controls">
+      <input class="sbar" id="snap-label" placeholder="Optional label (e.g., 'Before restart')" style="width:280px">
+      <button type="button" class="btn btn-primary" id="btn-save-snap">Save Snapshot</button>
+      <span class="snap-msg" id="snap-msg"></span>
+      <button type="button" class="btn" id="btn-gen-report" style="margin-left: 10px;">Generate Report</button>
+      <button type="button" class="btn" id="btn-dl-report" style="margin-left: 5px;">Download Report</button>
+    </div>
+    <div class="snap-grid">
+      <div class="pnl">
+        <div class="pnl-head"><span class="pnl-title">Saved Snapshots</span></div>
+        <div class="tbl-scroll" style="max-height:400px" id="snapshots-wrap">
+          <div id="snapshots-tbl-sk">
+            <div class="sk sk-row"></div><div class="sk sk-row" style="margin-top:6px"></div>
+          </div>
+          <table id="snapshots-tbl" style="display:none"></table>
+        </div>
+      </div>
+      <div class="pnl">
+        <div class="pnl-head"><span class="pnl-title">Comparison Result</span></div>
+        <div class="pnl-body" id="compare-result-wrap">
+          <div id="compare-result-sk">
+            <div class="sk sk-row"></div><div class="sk sk-row" style="margin-top:6px"></div>
+          </div>
+          <div id="compare-result" style="display:none">
+            <div class="note">Select a snapshot and click "Compare" to see changes.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DEBUG ────────────────────────────────────────────────────── -->
+  <div id="pg-debug" class="pg">
+    <div class="strip" style="margin-bottom:16px">
+      <div class="scard" id="dbg-sc-fetch">
+        <div class="scard-top"><span class="scard-lbl">Fetch /data</span></div>
+        <div class="sval" id="dbg-fetch">—</div>
+        <div class="ssub">Last fetch time (ms)</div>
+      </div>
+      <div class="scard" id="dbg-sc-render">
+        <div class="scard-top"><span class="scard-lbl">Render</span></div>
+        <div class="sval" id="dbg-render">—</div>
+        <div class="ssub">DOM render time (ms)</div>
+      </div>
+      <div class="scard" id="dbg-sc-cycle">
+        <div class="scard-top"><span class="scard-lbl">Cycle</span></div>
+        <div class="sval" id="dbg-cycle">—</div>
+        <div class="ssub">Total refresh cycle (ms)</div>
+      </div>
+      <div class="scard" id="dbg-sc-fps">
+        <div class="scard-top"><span class="scard-lbl">FPS</span></div>
+        <div class="sval" id="dbg-fps">—</div>
+        <div class="ssub">Frames per second</div>
+      </div>
+    </div>
+
+    <div class="grid2" style="margin-bottom:16px">
+      <div class="pnl">
+        <div class="pnl-head">Browser Memory</div>
+        <div class="pnl-body" id="dbg-mem-wrap">
+          <div id="dbg-mem-sk"><div class="sk sk-row"></div><div class="sk sk-row" style="margin-top:6px"></div></div>
+          <div id="dbg-mem" style="display:none"></div>
+        </div>
+      </div>
+      <div class="pnl">
+        <div class="pnl-head">Performance Timeline</div>
+        <div class="pnl-body" id="dbg-timeline-wrap">
+          <div id="dbg-timeline-sk"><div class="sk sk-row"></div></div>
+          <div id="dbg-timeline" style="font-family:monospace;font-size:11px;display:none"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid2" style="margin-bottom:16px">
+      <div class="pnl">
+        <div class="pnl-head">System Metrics (from pcmon)</div>
+        <div class="pnl-body" id="dbg-sys-metrics-wrap">
+          <div id="dbg-sys-metrics-sk"><div class="sk sk-row"></div></div>
+          <div id="dbg-sys-metrics" style="display:none"></div>
+        </div>
+      </div>
+      <div class="pnl">
+        <div class="pnl-head">Cache Status</div>
+        <div class="pnl-body" id="dbg-cache-wrap">
+          <div id="dbg-cache-sk"><div class="sk sk-row"></div></div>
+          <div id="dbg-cache" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid2" style="margin-bottom:16px">
+      <div class="pnl">
+        <div class="pnl-head">JavaScript Errors <span id="js-err-count" style="color:var(--text-dim)">0</span></div>
+        <div class="tbl-scroll" style="max-height:300px">
+          <div id="js-errors" style="padding:12px;font-family:monospace;font-size:12px">
+            <div class="note">No errors detected</div>
+          </div>
+        </div>
+      </div>
+      <div class="pnl">
+        <div class="pnl-head">PowerShell Errors</div>
+        <div id="ps-errors"></div>
+        <div class="pnl-body" id="dbg-ps-errs">
+          <div class="note">No PowerShell errors</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pnl">
+      <div class="pnl-head">Quick Links</div>
+      <div style="padding:12px;font-family:monospace;font-size:11px">
+        <div style="margin:4px 0"><a href="/errors" target="_blank" rel="noopener" style="color:var(--accent)">/errors</a> — PowerShell errors & system info</div>
+        <div style="margin:4px 0"><a href="/logs" target="_blank" rel="noopener" style="color:var(--accent)">/logs</a> — Raw error log</div>
+        <div style="margin:4px 0"><a href="/debug" target="_blank" rel="noopener" style="color:var(--accent)">/debug</a> — Backend cache state</div>
+        <div style="margin:4px 0"><a href="/health" target="_blank" rel="noopener" style="color:var(--accent)">/health</a> — Server status</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SETTINGS ─────────────────────────────────────────────────────── -->
+  <div id="pg-settings" class="pg">
+    <div class="pnl">
+      <div class="pnl-head"><span class="pnl-title">⚙ Connection</span></div>
+      <div class="pnl-body">
+        <div id="settings-conn-info" class="sys-info">
+          <div class="sys-row"><span>Status</span><span id="set-conn-status">Connecting...</span></div>
+          <div class="sys-row"><span>Method</span><span id="set-conn-method">—</span></div>
+          <div class="sys-row"><span>Refresh Rate</span><span id="set-refresh-val">—</span></div>
+          <div class="sys-row"><span>Latency</span><span id="set-latency">—</span></div>
+        </div>
+        <div style="margin-top:12px">
+          <label class="sbar" style="display:inline-block;margin-right:8px">Refresh Rate</label>
+          <select class="rf-sel" id="rf-sel-settings">
+            <option value="500" selected>500 ms</option>
+            <option value="1000">1 s</option>
+            <option value="2000">2 s</option>
+            <option value="5000">5 s</option>
+            <option value="10000">10 s</option>
+          </select>
+        </div>
+        <div class="note" style="margin-top:8px">
+          <span>⚡ WebSocket</span> = Real-time streaming<br>
+          <span>🔌 SSE</span> = Server-Sent Events<br>
+          <span>🔄 HTTP</span> = Fallback polling<br>
+          <span style="font-size:0.9em;color:var(--dim)">Fast counters: ~500ms | Tables: 2-4s | Static: 30s+</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="pnl" style="margin-top:16px">
+      <div class="pnl-head"><span class="pnl-title">Alert Thresholds</span></div>
+      <div class="pnl-body" id="thresholds-form-wrap">
+        <div id="thresholds-form-sk">
+          <div class="sk sk-row"></div><div class="sk sk-row" style="margin-top:6px"></div>
+          <div class="sk sk-row" style="margin-top:6px"></div>
+        </div>
+        <div id="thresholds-form" style="display:none"></div>
+      </div>
+      <button type="button" id="btn-save-thresholds" class="btn-primary" style="margin-top:10px">Save Thresholds</button>
+      <span id="thresholds-msg" style="margin-left:10px"></span>
+    </div>
+
+    <div class="pnl" style="margin-top:16px">
+      <div class="pnl-head"><span class="pnl-title">Data Export</span></div>
+      <div class="pnl-body">
+        <p style="margin:0 0 10px 0;color:var(--dim)">Export all system data for AI analysis or backup.</p>
+        <button type="button" id="btn-export-data" class="btn-secondary">Export All Data (JSON)</button>
+        <span id="export-msg" style="margin-left:10px"></span>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /main -->
+
+<script>
+/* === MODULE: config ============================================= */
+/* Shared state object — all modules write/read from here */
+const PCM = {
+  /* Config constants */
+  HISTORY_SIZE: 40,
+  TABLE_UPDATE_INTERVAL: 4000,
+  DEFAULT_THRESHOLDS: { ram_pct: 85, cpu_pct: 90, commit_pct: 80, pages_sec: 1000, non_paged_mb: 1500, disk_pct: 90 },
+
+  /* State */
+  refreshInterval: 500,
+  pollTimer: null,
+  pollInFlight: false,
+  firstLoad: true,
+  lastTableUpdate: 0,
+  thresholds: {},
+  connectionMethod: 'unknown',
+  eventSource: null,
+  wsSocket: null,
+  wsReconnectDelay: 1000,
+  wsMaxReconnectDelay: 10000,
+  resizeTimer: null,
+
+  /* Data */
+  cachedData: null,
+  history: { ram: [], cpu: [], disk: [], net: [], commit: [] },
+  prev: { ram: 0, cpu: 0, disk: 0, commit: 0 },
+
+  /* Performance */
+  perf: { fetchMs: 0, renderMs: 0, cycleMs: 0, fps: 0, fpsFrames: 0, fpsLast: 0 },
+  perfTimer: 0,
+
+  /* Errors */
+  errors: []
+};
+PCM.thresholds = { ...PCM.DEFAULT_THRESHOLDS };
+
+
+/* === MODULE: utils =============================================== */
+
+/* ── DOM Helpers ──────────────────────────────────────────────────── */
+const EL = id => document.getElementById(id);
+const TXT = (el, v) => { if (el) el.textContent = v; };
+const PCT = (el, v) => { if (el) el.style.width = Math.min(100, Math.max(0, v)) + '%'; };
+
+/* ── Escape ──────────────────────────────────────────────────────── */
+function esc(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+/* ── Status ──────────────────────────────────────────────────────── */
+function statusClass(v) {
+  if (v < 50) return 'ok';
+  if (v < 80) return 'warn';
+  return 'bad';
+}
+
+function COL(el, val) {
+  if (!el) return;
+  el.classList.remove('ok', 'warn', 'bad');
+  el.classList.add(statusClass(val));
+}
+
+function SBADGE(el, val) {
+  if (!el) return;
+  const cls = statusClass(val);
+  el.textContent = val < 50 ? 'OK' : val < 80 ? 'WARN' : 'HIGH';
+  el.className = 'sbadge show ' + cls;
+}
+
+function SCARD(el, val) {
+  if (!el) return;
+  el.classList.remove('ok', 'warn', 'bad');
+  el.classList.add(statusClass(val));
+}
+
+function FILL(el, val) {
+  if (!el) return;
+  PCT(el, val);
+  el.classList.remove('ok', 'warn', 'bad');
+  el.classList.add(statusClass(val));
+}
+
+/* ── Formatting ─────────────────────────────────────────────────── */
+function fmtNum(n, dec = 2) {
+  if (n === null || n === undefined || isNaN(n) || !isFinite(n)) return '—';
+  return n.toFixed(dec);
+}
+
+function fmtMem(mb) {
+  if (mb === null || mb === undefined || isNaN(mb) || !isFinite(mb)) return '—';
+  if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB';
+  return mb.toFixed(0) + ' MB';
+}
+
+function getTrend(current, previous) {
+  if (current == null || previous == null) return '';
+  const diff = current - previous;
+  if (diff > 0) return '↑' + diff.toFixed(1);
+  if (diff < 0) return '↓' + Math.abs(diff).toFixed(1);
+  return '→';
+}
+
+/* ── Skeleton ────────────────────────────────────────────────────── */
+function showSkeleton(skId, tableId) {
+  const sk = EL(skId);
+  const tbl = EL(tableId);
+  if (sk) sk.style.display = '';
+  if (tbl) tbl.style.display = 'none';
+}
+
+function hideSkeleton(skId, tableId) {
+  const sk = EL(skId);
+  const tbl = EL(tableId);
+  if (sk) sk.style.display = 'none';
+  if (tbl) tbl.style.display = '';
+}
+
+function setSkeleton(skId, contentId, ready) {
+  if (ready) hideSkeleton(skId, contentId);
+  else showSkeleton(skId, contentId);
+}
+
+function hasRows(rows) {
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+function hasObjectRows(rows) {
+  return rows && typeof rows === 'object' && Object.keys(rows).length > 0;
+}
+
+function hasMetric(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function subsystemState(data, key) {
+  return data && data.subsystems && data.subsystems[key] ? String(data.subsystems[key]) : '';
+}
+
+function subsystemSettled(data, key) {
+  const state = subsystemState(data, key);
+  return state && !['warming', 'transiently_unavailable', 'error'].includes(state);
+}
+
+function loadedArray(data, field, subsystemKey) {
+  if (!data || !Array.isArray(data[field])) return false;
+  if (!subsystemKey) return true;
+  return subsystemSettled(data, subsystemKey);
+}
+
+function loadedObject(data, field, subsystemKey) {
+  if (!data || !data[field] || typeof data[field] !== 'object') return false;
+  if (!subsystemKey) return true;
+  return subsystemSettled(data, subsystemKey);
+}
+
+function unloadCard(cardEl) {
+  if (cardEl) cardEl.classList.remove('loading');
+}
+
+function showCardLoading(cardEl) {
+  if (cardEl && !cardEl.classList.contains('loading')) cardEl.classList.add('loading');
+}
+
+function showAllSkeletons() {
+  const cardIds = ['sc-ram', 'sc-cpu', 'sc-disk', 'sc-cm', 'r-sc-ram', 'r-sc-cm', 'r-sc-pg', 'c-sc-cpu', 'c-sc-pg'];
+  cardIds.forEach(id => { const el = EL(id); if (el) el.classList.add('loading'); });
+  const skPairs = [
+    // Keep skeleton mappings centralized so newly-added tables do not get stuck
+    // in loading state after render.
+    ['ov-tbl-sk', 'ov-tbl'], ['r-tbl-sk', 'r-tbl'], ['c-tbl-sk', 'c-tbl'],
+    ['sus-tbl-sk', 'sus-tbl'], ['svc-tbl-sk', 'svc-tbl'],
+    ['startup-tbl-sk', 'startup-tbl'], ['pagefile-tbl-sk', 'pagefile-tbl'],
+    ['profiles-tbl-sk', 'profiles-tbl'], ['net-tbl-sk', 'net-tbl'], ['all-tbl-sk', 'all-tbl'],
+    ['ov-disks-sk', 'ov-disks'], ['disk-drives-sk', 'disk-drives'],
+    ['disk-io-sk', 'disk-io-strip'], ['ov-io-sk', 'ov-io'],
+    ['gpu-adapters-sk', 'gpu-adapters'], ['group-insights-sk', 'group-insights'],
+    ['sys-summary-sk', 'sys-summary'],
+    ['dbg-mem-sk', 'dbg-mem'], ['dbg-timeline-sk', 'dbg-timeline'],
+    ['dbg-sys-metrics-sk', 'dbg-sys-metrics'], ['dbg-cache-sk', 'dbg-cache']
+  ];
+  skPairs.forEach(([skId, tblId]) => showSkeleton(skId, tblId));
+}
+
+function hideAllSkeletons() {
+  const cardIds = ['sc-ram', 'sc-cpu', 'sc-disk', 'sc-cm', 'r-sc-ram', 'r-sc-cm', 'r-sc-pg', 'c-sc-cpu', 'c-sc-pg'];
+  cardIds.forEach(id => { const el = EL(id); if (el) el.classList.remove('loading'); });
+}
+
+function setCardLoaded(cardId, ready) {
+  const el = EL(cardId);
+  if (!el) return;
+  if (ready) el.classList.remove('loading');
+  else el.classList.add('loading');
+}
+
+/* ── Sparklines ───────────────────────────────────────────────────── */
+function hexOrVarToAlpha(color, alpha) {
+  if (color.startsWith('#')) {
+    let hex = color.slice(1);
+    if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+  if (color.startsWith('rgb(')) return color.replace(/\)$/, `,${alpha})`).replace('rgb(', 'rgba(');
+  return `rgba(0,245,176,${alpha})`;
+}
+
+function sparkColorVar(cls) {
+  if (cls === 'ok') return '--ok';
+  if (cls === 'warn') return '--warn';
+  if (cls === 'bad') return '--bad';
+  return '--info';
+}
+
+function updateHistory(type, value) {
+  if (typeof value !== 'number' || isNaN(value) || !isFinite(value)) return;
+  PCM.history[type].push(value);
+  if (PCM.history[type].length > PCM.HISTORY_SIZE) PCM.history[type].shift();
+}
+
+function drawSparkline(canvasId, values, colorVar, opts = {}) {
+  const canvas = EL(canvasId);
+  if (!canvas || !Array.isArray(values)) return;
+  const validValues = values.filter(v => typeof v === 'number' && Number.isFinite(v));
+  if (validValues.length < 2) return;
+
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement ? canvas.parentElement.getBoundingClientRect() : { width: 200, height: 32 };
+  const W = Math.max(Math.round(rect.width || 200), 100);
+  const H = parseInt(canvas.style.height, 10) || canvas.clientHeight || 32;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  canvas.width = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  const max = Math.max(...validValues, 1);
+  const min = Math.min(...validValues);
+  const range = max - min || 1;
+  const step = validValues.length > 1 ? W / (validValues.length - 1) : W;
+  const style = getComputedStyle(document.documentElement);
+  const color = style.getPropertyValue(colorVar).trim() || '#00f5b0';
+
+  // Grid lines
+  ctx.strokeStyle = hexOrVarToAlpha('#ffffff', 0.08);
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2, 4]);
+  for (let g = 0; g <= 4; g++) {
+    const y = Math.round((g / 4) * (H - 4)) + 2;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // Threshold line (if provided)
+  if (opts.threshold) {
+    const threshY = H - (opts.threshold / max) * (H - 4) - 2;
+    ctx.strokeStyle = opts.threshColor || '#ff6b6b';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(0, threshY);
+    ctx.lineTo(W, threshY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Points
+  const pts = validValues.map((v, i) => ({
+    x: i * step,
+    y: H - (v / max) * (H - 4) - 2
+  }));
+
+  // Smooth bezier curve
+  ctx.beginPath();
+  if (pts.length > 2) {
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[Math.max(0, i - 1)];
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      const p3 = pts[Math.min(pts.length - 1, i + 2)];
+      const cp1x = p1.x + (p2.x - p0.x) / 6;
+      const cp1y = p1.y + (p2.y - p0.y) / 6;
+      const cp2x = p2.x - (p3.x - p1.x) / 6;
+      const cp2y = p2.y - (p3.y - p1.y) / 6;
+      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+    }
+  } else {
+    ctx.moveTo(pts[0].x, pts[0].y);
+    ctx.lineTo(pts[1].x, pts[1].y);
+  }
+
+  // Gradient fill
+  const lastX = (validValues.length - 1) * step;
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, hexOrVarToAlpha(color, 0.5));
+  grad.addColorStop(0.5, hexOrVarToAlpha(color, 0.15));
+  grad.addColorStop(1, hexOrVarToAlpha(color, 0.02));
+  ctx.lineTo(lastX, H);
+  ctx.lineTo(pts[0].x, H);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Glow line
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 12;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2.5;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Animated pulse dot (current value)
+  const lastPt = pts[pts.length - 1];
+  const now = Date.now();
+  const pulse = Math.sin(now / 300) * 0.3 + 0.7;
+  
+  // Outer glow
+  ctx.beginPath();
+  ctx.arc(lastPt.x, lastPt.y, 6, 0, Math.PI * 2);
+  ctx.fillStyle = hexOrVarToAlpha(color, pulse * 0.3);
+  ctx.fill();
+  
+  // Inner dot
+  ctx.beginPath();
+  ctx.arc(lastPt.x, lastPt.y, 4, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 15;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Min/Max labels
+  if (opts.showMinMax !== false) {
+    ctx.font = '9px system-ui, sans-serif';
+    ctx.fillStyle = hexOrVarToAlpha('#ffffff', 0.5);
+    ctx.textAlign = 'right';
+    ctx.fillText(max.toFixed(0), W - 3, 10);
+    ctx.fillText(min.toFixed(0), W - 3, H - 2);
+  }
+
+  // Store for animation
+  canvas._lastDraw = now;
+}
+
+function refreshSparklines(cpuPct, ramPct, diskPct) {
+  drawSparkline('spk-ram', PCM.history.ram, sparkColorVar(statusClass(ramPct)));
+  drawSparkline('spk-cpu', PCM.history.cpu, sparkColorVar(statusClass(cpuPct)));
+  drawSparkline('spk-cpu2', PCM.history.cpu, sparkColorVar(statusClass(cpuPct)));
+  drawSparkline('spk-disk', PCM.history.disk, sparkColorVar(statusClass(diskPct)));
+  drawSparkline('disk-spk', PCM.history.disk, '--info');
+  drawSparkline('net-spk', PCM.history.net, '--ok');
+  drawSparkline('spk-cm', PCM.history.commit, sparkColorVar(statusClass(PCM.history.commit.slice(-1)[0] || 0)));
+}
+
+/* ── Fast update handler ─────────────────────────────────────────── */
+function handleFastUpdate(data) {
+  if (!data._fast) return;
+
+  if (PCM.cachedData) {
+    PCM.cachedData.ram_pct = data.ram_pct;
+    PCM.cachedData.ram_avail_mb = data.ram_avail_mb;
+    PCM.cachedData.commit_pct = data.commit_pct;
+    PCM.cachedData.cpu_pct = data.cpu_pct;
+    PCM.cachedData.disk_pct = data.disk_pct;
+  }
+
+  const ramPct = data.ram_pct || 0;
+  const cpuPct = data.cpu_pct || 0;
+  const diskPct = data.disk_pct || 0;
+  const ramStatus = ramPct > PCM.thresholds.ram_pct ? 'bad' : ramPct > PCM.thresholds.ram_pct * 0.8 ? 'warn' : 'ok';
+  const cpuStatus = cpuPct > PCM.thresholds.cpu_pct ? 'bad' : cpuPct > PCM.thresholds.cpu_pct * 0.8 ? 'warn' : 'ok';
+
+  setCardLoaded('sc-ram', hasMetric(data.ram_pct) && hasMetric(data.ram_avail_mb));
+  setCardLoaded('r-sc-ram', hasMetric(data.ram_pct) && hasMetric(data.ram_avail_mb));
+  TXT(EL('sv-ram'), ramPct.toFixed(1) + '%');
+  TXT(EL('ss-ram'), data.ram_avail_mb + ' MB avail');
+  COL(EL('sf-ram'), ramPct);
+  if (EL('sb-ram')) EL('sb-ram').textContent = ramPct > PCM.thresholds.ram_pct ? 'HIGH' : '';
+
+  setCardLoaded('sc-cpu', hasMetric(data.cpu_pct));
+  setCardLoaded('c-sc-cpu', hasMetric(data.cpu_pct));
+  TXT(EL('sv-cpu'), cpuPct.toFixed(1) + '%');
+  COL(EL('sf-cpu'), cpuPct);
+  if (EL('sb-cpu')) EL('sb-cpu').textContent = cpuPct > PCM.thresholds.cpu_pct ? 'HIGH' : '';
+
+  setCardLoaded('sc-disk', hasMetric(data.disk_pct));
+  if (EL('sv-disk')) { TXT(EL('sv-disk'), diskPct.toFixed(1) + '%'); COL(EL('sf-disk'), diskPct); }
+
+  setCardLoaded('sc-cm', hasMetric(data.commit_pct));
+  setCardLoaded('r-sc-cm', hasMetric(data.commit_pct));
+
+  if (EL('r-sv-ram')) { TXT(EL('r-sv-ram'), ramPct.toFixed(1) + '%'); TXT(EL('r-avail'), data.ram_avail_mb + ' MB'); COL(EL('r-sf-ram'), ramPct); }
+  if (EL('c-sv-cpu')) { TXT(EL('c-sv-cpu'), cpuPct.toFixed(1) + '%'); COL(EL('c-sf-cpu'), cpuPct); }
+
+  PCM.history.ram.push(ramPct);
+  PCM.history.cpu.push(cpuPct);
+  PCM.history.disk.push(diskPct);
+  if (PCM.history.ram.length > PCM.HISTORY_SIZE) PCM.history.ram.shift();
+  if (PCM.history.cpu.length > PCM.HISTORY_SIZE) PCM.history.cpu.shift();
+  if (PCM.history.disk.length > PCM.HISTORY_SIZE) PCM.history.disk.shift();
+
+  const now = Date.now();
+  if (!handleFastUpdate._lastSparkline || now - handleFastUpdate._lastSparkline > 1000) {
+    handleFastUpdate._lastSparkline = now;
+    refreshSparklines(cpuPct, ramPct, diskPct);
+  }
+
+  if (EL('ts')) EL('ts').textContent = data.ts || '--:--:--';
+  PCM.perfTimer = now;
+  PCM.cachedData = PCM.cachedData || {};
+  PCM.cachedData.ts = data.ts;
+}
+
+
+/* === MODULE: stream ================================================ */
+
+/* ── WebSocket ────────────────────────────────────────────────────── */
+function tryWebSocket() {
+  if (PCM.wsSocket) { PCM.wsSocket.close(); PCM.wsSocket = null; }
+  try {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    PCM.wsSocket = new WebSocket(protocol + '//' + window.location.host + '/stream');
+    PCM.wsSocket.onopen = () => {
+      PCM.connectionMethod = 'websocket';
+      PCM.wsReconnectDelay = 1000;
+      if (PCM.eventSource) { PCM.eventSource.close(); PCM.eventSource = null; }
+      if (PCM.pollTimer) { clearTimeout(PCM.pollTimer); PCM.pollTimer = null; }
+      PCM.pollInFlight = false;
+      updateSettingsConnInfo();
+    };
+    PCM.wsSocket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data._fast) {
+          handleFastUpdate(data);
+        } else if (data._loading) {
+          handleLoadingData(data);
+        } else {
+          const renderStart = performance.now();
+          renderAll(data);
+          PCM.perf.renderMs = performance.now() - renderStart;
+          PCM.perf.cycleMs = PCM.perf.renderMs;
+          PCM.perfTimer = Date.now();
+          PCM.pollInFlight = false;
+          PCM.cachedData = data;
+          updateDebugPanel(data);
+          updateSettingsConnInfo();
+        }
+      } catch (e) { /* malformed stream messages are ignored and the next tick will recover */ }
+    };
+    PCM.wsSocket.onerror = () => { PCM.connectionMethod = 'sse'; trySSE(); };
+    PCM.wsSocket.onclose = () => {
+      if (PCM.connectionMethod === 'websocket') { PCM.connectionMethod = 'sse'; trySSE(); }
+    };
+  } catch (e) { PCM.connectionMethod = 'sse'; trySSE(); }
+}
+
+/* ── SSE ──────────────────────────────────────────────────────────── */
+function trySSE() {
+  if (PCM.eventSource) { PCM.eventSource.close(); PCM.eventSource = null; }
+  if (PCM.wsSocket) { PCM.wsSocket.close(); PCM.wsSocket = null; }
+  try {
+    PCM.eventSource = new EventSource('/stream');
+    PCM.eventSource.onopen = () => {
+      PCM.connectionMethod = 'sse';
+      PCM.wsReconnectDelay = 1000;
+      if (PCM.pollTimer) { clearTimeout(PCM.pollTimer); PCM.pollTimer = null; }
+      PCM.pollInFlight = false;
+      updateSettingsConnInfo();
+    };
+    PCM.eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data._fast) {
+          handleFastUpdate(data);
+        } else if (data._loading) {
+          handleLoadingData(data);
+        } else {
+          const renderStart = performance.now();
+          renderAll(data);
+          PCM.perf.renderMs = performance.now() - renderStart;
+          PCM.perf.cycleMs = PCM.perf.renderMs;
+          PCM.perfTimer = Date.now();
+          PCM.pollInFlight = false;
+          PCM.cachedData = data;
+          updateDebugPanel(data);
+          updateSettingsConnInfo();
+        }
+      } catch (e) { /* malformed SSE messages are ignored and the next tick will recover */ }
+    };
+    PCM.eventSource.onerror = () => {
+      PCM.connectionMethod = 'http';
+      PCM.eventSource.close();
+      PCM.eventSource = null;
+      PCM.wsReconnectDelay = Math.min(PCM.wsReconnectDelay * 1.5, PCM.wsMaxReconnectDelay);
+      startHTTPPolling();
+    };
+  } catch (e) { PCM.connectionMethod = 'http'; startHTTPPolling(); }
+}
+
+function initStream() { tryWebSocket(); }
+
+function startHTTPPolling() {
+  if (PCM.pollTimer) return;
+  PCM.connectionMethod = 'http';
+  fetchData();
+}
+
+
+/* === MODULE: api ================================================== */
+
+/* ── Auth ─────────────────────────────────────────────────────────── */
+function authHeaders(extra = {}) {
+  const h = { 'Content-Type': 'application/json' };
+  Object.assign(h, extra);
+  return h;
+}
+
+/* ── Schedule ─────────────────────────────────────────────────────── */
+function scheduleNextFetch(delay = PCM.refreshInterval) {
+  clearTimeout(PCM.pollTimer);
+  PCM.pollTimer = setTimeout(fetchData, Math.max(500, delay));
+}
+
+function handleLoadingData(data) {
+  PCM.cachedData = data;
+  PCM.perfTimer = Date.now();
+  showAllSkeletons();
+  TXT(EL('hdr-host'), data.hostname || '—');
+  TXT(EL('ts'), data.ts || '--:--:--');
+  TXT(EL('issue-primary-title'), 'Collecting first live sample...');
+  TXT(EL('issue-primary-desc'), 'The dashboard is online; tables will fill as soon as Windows collectors publish the first full payload.');
+  updateDebugPanel(data);
+  updateSettingsConnInfo();
+}
+
+/* ── Fetch ────────────────────────────────────────────────────────── */
+async function fetchData() {
+  if (PCM.pollInFlight && PCM.connectionMethod === 'http') return;
+  if (PCM.connectionMethod === 'http') PCM.pollInFlight = true;
+  const t0 = performance.now();
+  try {
+    // Live data must bypass browser caches or the refresh selector becomes dishonest.
+    const res = await fetch('/data', { cache: 'no-store' });
+    PCM.perf.fetchMs = performance.now() - t0;
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data && data._loading) {
+      handleLoadingData(data);
+      PCM.pollInFlight = false;
+      if (PCM.connectionMethod === 'http') scheduleNextFetch();
+      return;
+    }
+    if (PCM.connectionMethod !== 'websocket' && PCM.connectionMethod !== 'sse') {
+      const renderStart = performance.now();
+      renderAll(data);
+      PCM.perf.renderMs = performance.now() - renderStart;
+      PCM.perf.cycleMs = performance.now() - t0;
+      PCM.perfTimer = Date.now();
+      PCM.pollInFlight = false;
+      PCM.cachedData = data;
+      updateDebugPanel(data);
+      updateSettingsConnInfo();
+    }
+    if (PCM.connectionMethod === 'http') scheduleNextFetch();
+  } catch (e) {
+    PCM.perf.fetchMs = performance.now() - t0;
+    PCM.pollInFlight = false;
+    if (PCM.connectionMethod === 'http') scheduleNextFetch();
+  }
+}
+
+/* ── Bootstrap ────────────────────────────────────────────────────── */
+async function loadBootstrap() {
+  try {
+    // Bootstrap pulls both the first live sample and thresholds together so the
+    // first render already has real data plus alert configuration.
+    const [dataRes, configRes] = await Promise.all([
+      fetch('/data', { cache: 'no-store' }),
+      fetch('/api/config', { cache: 'no-store' })
+    ]);
+    const data = await dataRes.json();
+    const config = await configRes.json();
+    PCM.thresholds = { ...PCM.DEFAULT_THRESHOLDS, ...(config.thresholds || config || {}) };
+    if (data && data._loading) {
+      handleLoadingData(data);
+      return;
+    }
+    PCM.cachedData = data;
+    PCM.perfTimer = Date.now();
+    PCM.firstLoad = false;
+    renderAll(data);
+    updateDebugPanel(data);
+  } catch (e) {
+    showAllSkeletons();
+    TXT(EL('issue-primary-title'), 'Waiting for pcmon data...');
+    TXT(EL('issue-primary-desc'), 'The first collection pass is still warming up.');
+  }
+}
+
+/* ── Process Actions ──────────────────────────────────────────────── */
+async function killProcess(pid, name) {
+  if (!confirm('Kill process "' + name + '" (PID: ' + pid + ')?')) return;
+  try {
+    const res = await fetch('/api/process/' + pid + '/kill', {
+      method: 'POST',
+      headers: authHeaders({ 'X-PCMON-Confirm': '1' })
+    });
+    const data = await res.json();
+    if (data.success) { alert('Process terminated: ' + data.message); fetchData(); }
+    else { alert('Failed: ' + data.error); }
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function suspendProcess(pid, name) {
+  if (!confirm('Suspend process "' + name + '" (PID: ' + pid + ')?')) return;
+  try {
+    const res = await fetch('/api/process/' + pid + '/suspend', {
+      method: 'POST',
+      headers: authHeaders({ 'X-PCMON-Confirm': '1' })
+    });
+    const data = await res.json();
+    if (data.success) { alert('Process suspended: ' + data.message); }
+    else { alert('Failed: ' + data.error); }
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function resumeProcess(pid, name) {
+  if (!confirm('Resume process "' + name + '" (PID: ' + pid + ')?')) return;
+  try {
+    const res = await fetch('/api/process/' + pid + '/resume', {
+      method: 'POST',
+      headers: authHeaders({ 'X-PCMON-Confirm': '1' })
+    });
+    const data = await res.json();
+    if (data.success) { alert('Process resumed: ' + data.message); }
+    else { alert('Failed: ' + data.error); }
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+/* ── Config ───────────────────────────────────────────────────────── */
+async function fetchConfig() {
+  try {
+    const res = await fetch('/api/config', { cache: 'no-store' });
+    const data = await res.json();
+    PCM.thresholds = { ...PCM.DEFAULT_THRESHOLDS, ...(data.thresholds || data || {}) };
+  } catch (e) { /* config fetch is best-effort during startup */ }
+}
+
+async function saveConfig(cfg) {
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(cfg)
+    });
+    const data = await res.json();
+    if (data.success) PCM.thresholds = { ...PCM.thresholds, ...cfg };
+    return data.success;
+  } catch (e) { return false; }
+}
+
+async function saveThresholds(thresholds) {
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(thresholds)
+    });
+    const data = await res.json();
+    if (data.success) PCM.thresholds = { ...PCM.thresholds, ...thresholds };
+    return data.success;
+  } catch (e) { return false; }
+}
+
+/* ── Snapshots ────────────────────────────────────────────────────── */
+async function fetchSnapshots() {
+  try {
+    const res = await fetch('/api/snapshots', { cache: 'no-store' });
+    return await res.json();
+  } catch (e) { return []; }
+}
+
+async function deleteSnapshot(id) {
+  try {
+    await fetch('/api/snapshots/' + encodeURIComponent(id) + '/delete', { method: 'POST', headers: authHeaders() });
+    renderSnapshots();
+  } catch (e) { /* snapshot deletion failures are handled by the UI action state */ }
+}
+
+async function exportSnapshot(id, format) {
+  window.open('/api/snapshots/' + encodeURIComponent(id) + '/export.' + format, '_blank');
+}
+
+async function compareSnapshots(id) {
+  try {
+    const res = await fetch('/api/snapshots/' + encodeURIComponent(id) + '/compare', {
+      method: 'POST',
+      headers: authHeaders()
+    });
+    return await res.json();
+  } catch (e) { return { error: 'Network error' }; }
+}
+
+async function fetchReport() {
+  try {
+    const res = await fetch('/api/report', { cache: 'no-store' });
+    return await res.text();
+  } catch (e) { return '<p>Error loading report</p>'; }
+}
+
+async function fetchReportDownload() {
+  try {
+    const res = await fetch('/api/report/download');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'pcmon-report.html';
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) { alert('Download failed: ' + e.message); }
+}
+
+/* ── Errors ───────────────────────────────────────────────────────── */
+async function fetchErrors() {
+  try {
+    const res = await fetch('/errors', { cache: 'no-store' });
+    const data = await res.json();
+    PCM.errors = data.errors || [];
+    updateDebugPanel(PCM.cachedData);
+  } catch (e) { /* error polling stays best-effort */ }
+}
+
+/* ── Clipboard ───────────────────────────────────────────────────── */
+function copyTableToClipboard(tableId) {
+  const tbl = document.getElementById(tableId);
+  if (!tbl) return;
+  let text = '';
+  const headers = tbl.querySelectorAll('thead th');
+  headers.forEach((th, i) => { text += th.textContent + (i < headers.length - 1 ? '\t' : ''); });
+  text += '\n';
+  const rows = tbl.querySelectorAll('tbody tr');
+  rows.forEach(tr => {
+    const cells = tr.querySelectorAll('td');
+    cells.forEach((td, i) => { text += td.textContent + (i < cells.length - 1 ? '\t' : ''); });
+    text += '\n';
+  });
+  navigator.clipboard.writeText(text).then(() => alert('Copied to clipboard!')).catch(() => alert('Failed to copy'));
+}
+
+/* ── Export ───────────────────────────────────────────────────────── */
+async function exportAllData() {
+  try {
+    const res = await fetch('/api/export', { cache: 'no-store' });
+    const data = await res.json();
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'pcmon_export_' + new Date().toISOString().slice(0,19).replace(/[T:]/g,'-') + '.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    return true;
+  } catch (e) { return false; }
+}
+
+
+/* === MODULE: render ================================================ */
+
+/* ── Drives ───────────────────────────────────────────────────────── */
+function renderDrives(container, disks) {
+  if (!container) return;
+  container.innerHTML = '';
+  (disks || []).forEach(d => {
+    const pct = typeof d.pct === 'number' ? d.pct : 0;
+    const cls = pct < 70 ? 'ok' : pct < 85 ? 'warn' : 'bad';
+    const div = document.createElement('div');
+    div.className = 'drive-card';
+    div.innerHTML =
+      '<div class="drive-head"><span class="drive-letter">' + esc(d.drive || '?') + '</span><span class="drive-pct ' + cls + '">' + fmtNum(pct) + '%</span></div>' +
+      '<div class="drive-label">' + esc(d.label || '') + '</div>' +
+      '<div class="drive-bar"><div class="drive-fill ' + cls + '" style="width:' + pct + '%"></div></div>' +
+      '<div class="drive-meta">' + fmtMem((d.free_gb || 0) * 1024) + ' free&nbsp;/&nbsp;' + fmtMem((d.total_gb || 0) * 1024) + ' total</div>';
+    container.appendChild(div);
+  });
+}
+
+/* ── GPU ──────────────────────────────────────────────────────────── */
+function renderGPUAdapters(container, gpu) {
+  if (!container) return;
+  container.innerHTML = '';
+  // Show a polished unsupported state instead of rendering misleading zeroes.
+  if (!gpu || !gpu.available) { container.innerHTML = '<div class="note">No GPU data available</div>'; return; }
+  (gpu.adapters || []).forEach(a => {
+    const pct = a.pct || 0;
+    const div = document.createElement('div');
+    div.className = 'gpu-card';
+    div.innerHTML =
+      '<div class="gpu-name">' + esc(a.name || 'Unknown') + '</div>' +
+      '<div class="gpu-stat">Status: <span style="color:var(--ok)">' + esc(a.status || 'OK') + '</span></div>' +
+      '<div class="gpu-stat">Telemetry: ' + esc(a.telemetry_supported ? 'Supported' : 'Unavailable') + '</div>' +
+      '<div class="gpu-stat">Dedicated: ' + fmtMem((a.dedicated_gb || 0) * 1024) + '</div>' +
+      '<div class="gpu-stat">Total: ' + fmtMem((a.total_gb || 0) * 1024) + '</div>' +
+      '<div class="gpu-bar"><div class="gpu-fill" style="width:' + pct + '%"></div></div>';
+    container.appendChild(div);
+  });
+}
+
+/* ── I/O strip ──────────────────────────────────────────────────── */
+function ioHtml(io) {
+  return '<div class="io-card"><span class="io-lbl">' + esc(io.label) + '</span><span class="io-val">' + io.val + '</span></div>';
+}
+
+function issueSeverity(text) {
+  const t = (text || '').toLowerCase();
+  if (t.includes('critical') || t.includes('bottleneck') || t.includes('stale')) return 'bad';
+  if (t.includes('high') || t.includes('pressure') || t.includes('paging') || t.includes('unsupported') || t.includes('unavailable')) return 'warn';
+  return 'ok';
+}
+
+function summarizePrimaryIssue(data) {
+  if (data && data.collection_state && data.collection_state !== 'valid') {
+    return { title: 'Collector state: ' + data.collection_state, desc: 'pcmon is preserving the last useful data while a collector is degraded.' };
+  }
+  const issues = data && Array.isArray(data.insights) ? data.insights : [];
+  const first = issues[0] || 'System healthy.';
+  if (/critical|less than 1gb|heavy paging|bottleneck/i.test(first)) {
+    return { title: first, desc: 'This is the highest-signal issue in the current sample and likely the first thing to investigate.' };
+  }
+  if (/unsupported|unavailable/i.test(first)) {
+    return { title: first, desc: 'This capability is not currently available, and pcmon is reporting that honestly.' };
+  }
+  return { title: first, desc: 'pcmon is ranking the most important issue from the current live sample here.' };
+}
+
+/* ── Table ────────────────────────────────────────────────────────── */
+function renderTable(tbl, rows, cols, opts = {}) {
+  if (!tbl) return;
+  tbl.innerHTML = '';
+  const thead = tbl.createTHead();
+  const hdr = thead.insertRow();
+  cols.forEach(c => { const th = document.createElement('th'); th.textContent = c; hdr.appendChild(th); });
+  if (opts.actions) { const th = document.createElement('th'); th.textContent = 'Actions'; hdr.appendChild(th); }
+  const tbody = tbl.createTBody();
+  const maxRows = opts.maxRows || 30;
+  // Empty tables should explain why they are empty instead of looking broken.
+  if (!rows || rows.length === 0) {
+    const tr = tbody.insertRow();
+    const td = tr.insertCell();
+    td.colSpan = cols.length + (opts.actions ? 1 : 0);
+    td.textContent = opts.emptyText || 'No data available.';
+    td.className = 'note';
+    td.style.padding = '14px';
+    return;
+  }
+  rows.slice(0, maxRows).forEach((r, rowIdx) => {
+    const tr = tbody.insertRow();
+    cols.forEach((_, i) => { const td = tr.insertCell(); td.textContent = r[i] !== undefined ? r[i] : ''; });
+    if (opts.actions && opts.processData && opts.processData[rowIdx]) {
+      const p = opts.processData[rowIdx];
+      if (p && p.pid) {
+        const td = tr.insertCell();
+        const actions = [
+          { label: 'K', title: 'Kill process', fn: killProcess },
+          { label: 'S', title: 'Suspend process', fn: suspendProcess },
+          { label: 'R', title: 'Resume process', fn: resumeProcess }
+        ];
+        actions.forEach((action, idx) => {
+          const btn = document.createElement('button');
+          btn.className = 'btn-sm';
+          btn.title = action.title;
+          btn.textContent = action.label;
+          btn.dataset.pid = p.pid;
+          btn.dataset.name = p.name;
+          btn.style.marginRight = '2px';
+          btn.addEventListener('click', () => action.fn(p.pid, p.name));
+          td.appendChild(btn);
+        });
+        const cpBtn = document.createElement('button');
+        cpBtn.className = 'btn-sm';
+        cpBtn.title = 'Copy to clipboard';
+        cpBtn.textContent = 'C';
+        cpBtn.addEventListener('click', () => {
+          const pathEl = tbl.closest('.pg') || tbl;
+          copyTableToClipboard(tbl.id);
+        });
+        td.appendChild(cpBtn);
+      }
+    }
+  });
+}
+
+/* ── Main render ─────────────────────────────────────────────────── */
+function renderAll(d) {
+  if (!d) return;
+  if (d._loading) {
+    handleLoadingData(d);
+    return;
+  }
+
+  /* Throttle table updates */
+  const now = Date.now();
+  const doTables = (now - PCM.lastTableUpdate) > PCM.TABLE_UPDATE_INTERVAL;
+  if (doTables) PCM.lastTableUpdate = now;
+
+  const processReady = subsystemSettled(d, 'processes') && loadedArray(d, 'top_ram') && loadedArray(d, 'top_private') && loadedArray(d, 'top_cpu') && loadedArray(d, 'all_processes');
+  const staticReady = subsystemSettled(d, 'static');
+  const countersReady = subsystemSettled(d, 'counters');
+  const hasFullProcessData = processReady && hasRows(d.top_ram) && hasRows(d.top_private) && hasRows(d.top_cpu) && hasRows(d.all_processes);
+  const hasStaticData = staticReady && (loadedArray(d, 'disks') || loadedArray(d, 'startup') || loadedArray(d, 'pagefile') || loadedArray(d, 'ps_profiles'));
+  const hasGroupData = loadedObject(d, 'groups', 'processes');
+  const hasGpuData = !!(d.gpu && (d.gpu.available || d.gpu.status_text));
+  const hasNetworkData = subsystemSettled(d, 'network') && !!(d.network && (Array.isArray(d.network.adapters) || d.network.status_text));
+
+  /* Header */
+  if (EL('hdr-host')) EL('hdr-host').textContent = d.hostname || '—';
+
+  /* Overview metrics */
+  setCardLoaded('sc-ram', hasMetric(d.ram_pct) && hasMetric(d.ram_avail_mb));
+  TXT(EL('sv-ram'), fmtNum(d.ram_pct) + '%');
+  TXT(EL('ss-ram'), fmtMem(d.ram_avail_mb) + ' avail');
+  COL(EL('sf-ram'), d.ram_pct || 0);
+  FILL(EL('sf-ram'), d.ram_pct || 0);
+  SBADGE(EL('sb-ram'), d.ram_pct || 0);
+  const ramTrend = getTrend(d.ram_pct, PCM.prev.ram);
+  if (EL('sdt-ram')) EL('sdt-ram').textContent = ramTrend;
+  PCM.prev.ram = d.ram_pct || 0;
+
+  setCardLoaded('sc-cpu', hasMetric(d.cpu_pct));
+  TXT(EL('sv-cpu'), fmtNum(d.cpu_pct) + '%');
+  COL(EL('sf-cpu'), d.cpu_pct || 0);
+  FILL(EL('sf-cpu'), d.cpu_pct || 0);
+  SBADGE(EL('sb-cpu'), d.cpu_pct || 0);
+  const cpuTrend = getTrend(d.cpu_pct, PCM.prev.cpu);
+  if (EL('sdt-cpu')) EL('sdt-cpu').textContent = cpuTrend;
+  PCM.prev.cpu = d.cpu_pct || 0;
+
+  setCardLoaded('sc-disk', hasMetric(d.disk_pct));
+  TXT(EL('sv-disk'), fmtNum(d.disk_pct) + '%');
+  COL(EL('sf-disk'), d.disk_pct || 0);
+  FILL(EL('sf-disk'), d.disk_pct || 0);
+  const diskTrend = getTrend(d.disk_pct, PCM.prev.disk);
+  if (EL('sdt-disk')) EL('sdt-disk').textContent = diskTrend;
+  PCM.prev.disk = d.disk_pct || 0;
+
+  setCardLoaded('sc-cm', hasMetric(d.commit_pct));
+  TXT(EL('sv-cm'), fmtNum(d.commit_pct) + '%');
+  COL(EL('sf-cm'), d.commit_pct || 0);
+  FILL(EL('sf-fill-cm'), d.commit_pct || 0);
+  const cmTrend = getTrend(d.commit_pct, PCM.prev.commit);
+  if (EL('sdt-cm')) EL('sdt-cm').textContent = cmTrend;
+  PCM.prev.commit = d.commit_pct || 0;
+
+  TXT(EL('ts'), d.ts || '—');
+
+  /* Sparklines */
+  updateHistory('ram', d.ram_pct);
+  updateHistory('cpu', d.cpu_pct);
+  updateHistory('disk', d.disk_pct);
+  updateHistory('commit', d.commit_pct);
+  updateHistory('net', (d.net_sent_kb || 0) + (d.net_recv_kb || 0));
+  refreshSparklines(d.cpu_pct || 0, d.ram_pct || 0, d.disk_pct || 0);
+
+  /* RAM page */
+  setCardLoaded('r-sc-ram', hasMetric(d.ram_pct) && hasMetric(d.ram_avail_mb));
+  TXT(EL('r-sv-ram'), fmtNum(d.ram_pct) + '%');
+  TXT(EL('r-avail'), fmtMem(d.ram_avail_mb) + ' / ' + fmtMem((d.ram_total_gb || 0) * 1024));
+  COL(EL('r-sf-ram'), d.ram_pct || 0);
+  FILL(EL('r-sf-fill-ram'), d.ram_pct || 0);
+  setCardLoaded('r-sc-cm', hasMetric(d.commit_pct));
+  TXT(EL('r-sv-cm'), fmtNum(d.commit_pct) + '%');
+  TXT(EL('r-ss-cm'), fmtMem((d.commit_gb || 0) * 1024) + ' / ' + fmtMem((d.limit_gb || 0) * 1024));
+  COL(EL('r-sf-cm'), d.commit_pct || 0);
+  FILL(EL('r-sf-fill-cm'), d.commit_pct || 0);
+  setCardLoaded('r-sc-pg', hasMetric(d.pages_sec));
+  TXT(EL('r-sv-pg'), fmtNum(d.pages_sec || 0) + '/s');
+  if (EL('r-paged')) EL('r-paged').textContent = fmtMem(d.paged_pool_mb || 0);
+  if (EL('r-nonpaged')) EL('r-nonpaged').textContent = fmtMem(d.non_paged_mb || 0);
+  TXT(EL('r-sv-priv'), fmtMem(d.private_mb || 0));
+  TXT(EL('r-sv-pgpool'), fmtMem(d.paged_pool_mb || 0) + ' (' + fmtNum(d.paged_pool_pct || 0) + '%)');
+  TXT(EL('r-sv-npgpool'), fmtMem(d.non_paged_mb || 0) + ' (' + fmtNum(d.non_paged_pct || 0) + '%)');
+  TXT(EL('r-sv-pf'), fmtMem(d.page_file_mb || 0) + ' used');
+  setSkeleton('r-tbl-sk', 'r-tbl', processReady && loadedArray(d, 'top_private'));
+
+  /* CPU page */
+  setCardLoaded('c-sc-cpu', hasMetric(d.cpu_pct));
+  TXT(EL('c-sv-cpu'), fmtNum(d.cpu_pct) + '%');
+  COL(EL('c-sf-cpu'), d.cpu_pct || 0);
+  FILL(EL('c-sf-fill-cpu'), d.cpu_pct || 0);
+  setCardLoaded('c-sc-pg', hasMetric(d.pages_sec));
+  TXT(EL('c-sv-pg'), fmtNum(d.pages_sec || 0) + '/s');
+  TXT(EL('c-queue'), fmtNum(d.disk_queue || 0));
+  const cpu = d.cpu || {};
+  TXT(EL('cpu-name'), cpu.name || 'Unknown CPU');
+  TXT(EL('cpu-topology'), ((cpu.sockets || 0) || '—') + ' / ' + ((cpu.cores || 0) || '—') + ' / ' + ((cpu.logical || 0) || '—'));
+  TXT(EL('cpu-clocks'), (cpu.base_mhz ? fmtNum(cpu.base_mhz) + ' MHz' : '—') + ' / ' + (cpu.current_mhz ? fmtNum(cpu.current_mhz) + ' MHz' : '—') + (cpu.performance_pct ? ' (' + fmtNum(cpu.performance_pct) + '% perf)' : ''));
+  TXT(EL('cpu-max-clock'), cpu.max_seen_mhz ? fmtNum(cpu.max_seen_mhz) + ' MHz' : '—');
+  TXT(EL('cpu-temp'), cpu.temp_supported && cpu.temp_c != null ? fmtNum(cpu.temp_c) + ' C' : '—');
+  TXT(EL('cpu-power'), cpu.power_supported && cpu.power_w != null ? fmtNum(cpu.power_w) + ' W' : '—');
+  setSkeleton('c-tbl-sk', 'c-tbl', processReady && loadedArray(d, 'top_cpu'));
+
+  /* Disks */
+  if (hasRows(d.disks)) {
+    renderDrives(EL('ov-disks'), d.disks);
+    renderDrives(EL('disk-drives'), d.disks);
+  }
+  setSkeleton('disk-drives-sk', 'disk-drives', staticReady && loadedArray(d, 'disks'));
+  setSkeleton('ov-disks-sk', 'ov-disks', staticReady && loadedArray(d, 'disks'));
+
+  const diskIo = EL('disk-io-strip');
+  if (diskIo) {
+    const ioReady = countersReady && hasMetric(d.disk_read_mb) && hasMetric(d.disk_write_mb) && hasMetric(d.net_sent_kb) && hasMetric(d.net_recv_kb);
+    if (ioReady) {
+      diskIo.innerHTML = [
+        { label: 'Disk Read', val: fmtNum(d.disk_read_mb) + ' MB/s' },
+        { label: 'Disk Write', val: fmtNum(d.disk_write_mb) + ' MB/s' },
+        { label: 'Net Sent', val: fmtNum(d.net_sent_kb) + ' KB/s' },
+        { label: 'Net Recv', val: fmtNum(d.net_recv_kb) + ' KB/s' }
+      ].map(ioHtml).join('');
+    }
+    setSkeleton('disk-io-sk', 'disk-io-strip', ioReady);
+  }
+
+  const ovIo = EL('ov-io');
+  if (ovIo) {
+    const ioReady = countersReady && hasMetric(d.disk_read_mb) && hasMetric(d.disk_write_mb) && hasMetric(d.net_sent_kb) && hasMetric(d.net_recv_kb);
+    if (ioReady) {
+      ovIo.innerHTML = [
+        { label: 'Disk R/W', val: fmtNum(d.disk_read_mb) + ' / ' + fmtNum(d.disk_write_mb) + ' MB/s' },
+        { label: 'Net S/R', val: fmtNum(d.net_sent_kb) + ' / ' + fmtNum(d.net_recv_kb) + ' KB/s' }
+      ].map(ioHtml).join('');
+    }
+    setSkeleton('ov-io-sk', 'ov-io', ioReady);
+  }
+
+  /* GPU */
+  const gpu = d.gpu || {};
+  TXT(EL('g-avail'), gpu.available ? 'Yes' : 'No');
+  TXT(EL('g-status'), gpu.status_text || (gpu.available ? 'Collector active' : 'Unsupported / unavailable on this device'));
+  const gpuSection = EL('pg-gpu');
+  if (gpuSection) {
+    if (gpu && gpu.available && gpu.engines_supported) {
+      const eng = gpu.eng_type_totals || {};
+      TXT(EL('g-3d'), eng['3d'] !== undefined ? fmtNum(eng['3d']) + '%' : 'N/A');
+      TXT(EL('g-vdec'), eng['videodecode'] !== undefined ? fmtNum(eng['videodecode']) + '%' : 'N/A');
+      TXT(EL('g-venc'), eng['videoencode'] !== undefined ? fmtNum(eng['videoencode']) + '%' : 'N/A');
+      TXT(EL('g-copy'), eng['copy'] !== undefined ? fmtNum(eng['copy']) + '%' : 'N/A');
+    } else {
+      TXT(EL('g-3d'), 'N/A');
+      TXT(EL('g-vdec'), 'N/A');
+      TXT(EL('g-venc'), 'N/A');
+      TXT(EL('g-copy'), 'N/A');
+    }
+  }
+  if (hasGpuData) renderGPUAdapters(EL('gpu-adapters'), gpu);
+  setSkeleton('gpu-adapters-sk', 'gpu-adapters', hasGpuData);
+
+  /* Groups */
+  const groups = d.groups || {};
+  if (EL('grp-browser')) {
+    TXT(EL('grp-browser-val'), fmtMem(groups.browser ? groups.browser.ws_mb : 0));
+    TXT(EL('grp-browser-count'), (groups.browser ? groups.browser.count : 0) + ' processes');
+  }
+  if (EL('grp-dev')) {
+    TXT(EL('grp-dev-val'), fmtMem(groups.dev_tools ? groups.dev_tools.ws_mb : 0));
+    TXT(EL('grp-dev-count'), (groups.dev_tools ? groups.dev_tools.count : 0) + ' processes');
+  }
+  if (EL('grp-sec')) {
+    TXT(EL('grp-sec-val'), fmtMem(groups.security ? groups.security.ws_mb : 0));
+    TXT(EL('grp-sec-count'), (groups.security ? groups.security.count : 0) + ' processes');
+  }
+  const gi = EL('group-insights');
+  if (gi) {
+    const items = [];
+    if (groups.browser) items.push('Browser: ' + fmtMem(groups.browser.ws_mb) + ' (' + groups.browser.count + ' tabs)');
+    if (groups.dev_tools) items.push('Dev Tools: ' + fmtMem(groups.dev_tools.ws_mb) + ' (' + groups.dev_tools.count + ' tools)');
+    if (groups.security) items.push('Security: ' + fmtMem(groups.security.ws_mb) + ' (' + groups.security.count + ' services)');
+    if (hasGroupData) gi.innerHTML = items.length ? items.map(t => '<div class="insight">' + esc(t) + '</div>').join('') : '<div class="note" style="padding:6px 0">No group activity detected.</div>';
+    setSkeleton('group-insights-sk', 'group-insights', hasGroupData);
+  }
+
+  /* System */
+  const sysSummary = EL('sys-summary');
+  if (sysSummary) {
+    const network = d.network || {};
+    const subsystems = d.subsystems || {};
+    const systemReady = !!(d.hostname && d.os_caption && (hasStaticData || hasNetworkData || hasMetric(d.ram_total_gb)));
+    if (systemReady) sysSummary.innerHTML = [
+      ['Hostname', esc(d.hostname) || '—'],
+      ['OS', esc(d.os_caption) || '—'],
+      ['Total Processes', d.total_procs || 0],
+      ['RAM Total', fmtMem((d.ram_total_gb || 0) * 1024)],
+      ['Commit Limit', fmtMem((d.limit_gb || 0) * 1024)],
+      ['Collector', esc(d.collection_state || 'valid')],
+      ['Counters', esc(subsystems.counters || 'unknown')],
+      ['Network', esc(network.status_text || 'Unknown')],
+      ['Primary Adapter', esc(network.busiest_adapter || '—')]
+    ].map(([k, v]) => '<div class="sys-row"><span>' + k + '</span><span>' + v + '</span></div>').join('');
+    setSkeleton('sys-summary-sk', 'sys-summary', systemReady);
+  }
+
+  /* Throttled tables */
+  if (doTables) {
+    const topRamData = (d.top_ram || []).slice(0, 20);
+    if (processReady && loadedArray(d, 'top_ram')) renderTable(EL('ov-tbl'), topRamData.map(p => [p.name || '?', p.pid || 0, fmtMem(p.ws_mb), fmtNum(p.cpu_s, 1) + 's']), ['Name', 'PID', 'WS', 'CPU'], { actions: true, processData: topRamData });
+    setSkeleton('ov-tbl-sk', 'ov-tbl', processReady && loadedArray(d, 'top_ram'));
+
+    const topPrivData = (d.top_private || []).slice(0, 20);
+    if (processReady && loadedArray(d, 'top_private')) renderTable(EL('r-tbl'), topPrivData.map(p => [p.name || '?', p.pid || 0, fmtMem(p.ws_mb), fmtMem(p.private_mb)]), ['Name', 'PID', 'WS', 'Private'], { actions: true, processData: topPrivData });
+    setSkeleton('r-tbl-sk', 'r-tbl', processReady && loadedArray(d, 'top_private'));
+
+    const topCpuData = (d.top_cpu || []).slice(0, 20);
+    if (processReady && loadedArray(d, 'top_cpu')) renderTable(EL('c-tbl'), topCpuData.map(p => [p.name || '?', p.pid || 0, fmtNum(p.cpu_s, 1) + 's', fmtMem(p.ws_mb)]), ['Name', 'PID', 'CPU Time', 'WS'], { actions: true, processData: topCpuData });
+    setSkeleton('c-tbl-sk', 'c-tbl', processReady && loadedArray(d, 'top_cpu'));
+
+    const susData = (d.suspicious || []).slice(0, 30);
+    if (hasRows(d.suspicious)) renderTable(EL('sus-tbl'), susData.map(p => [p.name || '?', p.pid || 0, fmtMem(p.ws_mb), p.command_line ? 'Yes' : 'No']), ['Name', 'PID', 'WS', 'CLI?'], { actions: true, processData: susData });
+    setSkeleton('sus-tbl-sk', 'sus-tbl', processReady && Array.isArray(d.suspicious));
+
+    const svcData = (d.heavy_services || []).slice(0, 25);
+    if (processReady && Array.isArray(d.heavy_services)) renderTable(EL('svc-tbl'), svcData.map(s => [s.display_name || s.name || '?', s.name || '?', s.state || '?', s.start_mode || '?', s.pid || 0, fmtMem((d.top_ram || []).find(p => p.pid == s.pid)?.ws_mb || 0)]), ['Display Name', 'Name', 'State', 'Start', 'PID', 'WS'], { emptyText: 'No matching heavy services in the current sample.' });
+    setSkeleton('svc-tbl-sk', 'svc-tbl', processReady && Array.isArray(d.heavy_services));
+
+    /* System page */
+    if (hasRows(d.disks)) renderDrives(EL('disk-drives'), d.disks);
+    setSkeleton('disk-drives-sk', 'disk-drives', staticReady && loadedArray(d, 'disks'));
+
+    const startupData = (d.startup || []).slice(0, 20);
+    if (staticReady && Array.isArray(d.startup)) renderTable(EL('startup-tbl'), startupData.map(s => [s.name || '?', s.command || '?', s.location || '?']), ['Name', 'Command', 'Location'], { emptyText: 'No startup items were returned by Windows.' });
+    setSkeleton('startup-tbl-sk', 'startup-tbl', staticReady && Array.isArray(d.startup));
+
+    const pfData = (d.pagefile || []).slice(0, 5);
+    if (staticReady && Array.isArray(d.pagefile)) renderTable(EL('pagefile-tbl'), pfData.map(p => [p.name || '?', fmtMem(p.allocated_mb), fmtMem(p.current_usage_mb), fmtMem(p.peak_usage_mb)]), ['Name', 'Allocated MB', 'Current MB', 'Peak MB'], { emptyText: 'No page file data was returned.' });
+    setSkeleton('pagefile-tbl-sk', 'pagefile-tbl', staticReady && Array.isArray(d.pagefile));
+
+    const profiles = (d.ps_profiles || []);
+    if (staticReady && Array.isArray(d.ps_profiles)) renderTable(EL('profiles-tbl'), profiles.map(p => [p.path || '?', p.size_kb ? fmtMem(p.size_kb) : (p.exists ? '0 KB' : 'Missing')]), ['Profile Path', 'Size'], { emptyText: 'No PowerShell profile paths were discovered.' });
+    setSkeleton('profiles-tbl-sk', 'profiles-tbl', staticReady && Array.isArray(d.ps_profiles));
+
+    const networkAdapters = ((d.network && d.network.adapters) || []).slice(0, 12);
+    // This table is inventory/state, so it updates with the throttled table cadence
+    // instead of every fast metric tick.
+    if (hasNetworkData) renderTable(EL('net-tbl'), networkAdapters.map(n => [n.name || '?', n.kind || '?', n.status || '?', n.link_speed || '—', n.media_type || '—']), ['Name', 'Type', 'Status', 'Link', 'Media'], { emptyText: 'No physical network adapters were detected.' });
+    setSkeleton('net-tbl-sk', 'net-tbl', hasNetworkData);
+
+    /* All Processes */
+    const allProcs = (d.all_processes || []).slice(0, 100);
+    if (processReady && loadedArray(d, 'all_processes')) renderTable(EL('all-tbl'), allProcs.map(p => [p.name || '?', p.pid || 0, fmtMem(p.ws_mb), fmtNum(p.cpu_s, 1) + 's', p.threads || 0, p.handles || 0]), ['Name', 'PID', 'WS', 'CPU', 'Threads', 'Handles'], { actions: true, processData: allProcs });
+    setSkeleton('all-tbl-sk', 'all-tbl', processReady && loadedArray(d, 'all_processes'));
+
+    /* Insights */
+    const insEl = EL('insights-list');
+    if (insEl) {
+      insEl.innerHTML = (d.insights || []).map(t => '<div class="insight ' + issueSeverity(t) + '">' + esc(t) + '</div>').join('');
+      if (!d.insights || d.insights.length === 0) insEl.innerHTML = '<div class="note" style="padding:6px 0">No insights yet.</div>';
+    }
+    const primaryIssue = summarizePrimaryIssue(d);
+    TXT(EL('issue-primary-title'), primaryIssue.title);
+    TXT(EL('issue-primary-desc'), primaryIssue.desc);
+  }
+
+  /* Error banner */
+  const psErrEl = EL('ps-errors');
+  if (psErrEl) {
+    if (d.error_count > 0) psErrEl.innerHTML = '<div class="err-banner">PowerShell errors: ' + d.error_count + ' | <a href="/logs" target="_blank" rel="noopener">View logs</a> | <a href="/debug" target="_blank" rel="noopener">Debug</a></div>';
+    else psErrEl.innerHTML = '';
+  }
+}
+
+/* ── Debug panel ─────────────────────────────────────────────────── */
+function updateDebugPanel(data) {
+  const dbgFetch = EL('dbg-fetch');
+  const dbgRender = EL('dbg-render');
+  const dbgCycle = EL('dbg-cycle');
+  const dbgFps = EL('dbg-fps');
+  const dbgMem = EL('dbg-mem');
+
+  if (dbgFetch) {
+    const fc = PCM.perf.fetchMs < 500 ? 'ok' : PCM.perf.fetchMs < 2000 ? 'warn' : 'bad';
+    dbgFetch.textContent = data && data._loading ? 'waiting...' : PCM.perf.fetchMs.toFixed(1) + ' ms';
+    dbgFetch.className = 'sval ' + (data && data._loading ? 'warn' : fc);
+    COL(EL('dbg-sc-fetch'), data && data._loading ? 50 : PCM.perf.fetchMs > 2000 ? 90 : PCM.perf.fetchMs > 500 ? 50 : 10);
+  }
+  if (dbgRender) {
+    const rc = PCM.perf.renderMs < 50 ? 'ok' : PCM.perf.renderMs < 200 ? 'warn' : 'bad';
+    dbgRender.textContent = PCM.perf.renderMs.toFixed(1) + ' ms';
+    dbgRender.className = 'sval ' + rc;
+    COL(EL('dbg-sc-render'), PCM.perf.renderMs > 200 ? 90 : PCM.perf.renderMs > 50 ? 50 : 10);
+  }
+  if (dbgCycle) {
+    const cc = PCM.perf.cycleMs < 2000 ? 'ok' : PCM.perf.cycleMs < 5000 ? 'warn' : 'bad';
+    dbgCycle.textContent = PCM.perf.cycleMs.toFixed(1) + ' ms';
+    dbgCycle.className = 'sval ' + cc;
+    COL(EL('dbg-sc-cycle'), PCM.perf.cycleMs > 5000 ? 90 : PCM.perf.cycleMs > 2000 ? 50 : 10);
+  }
+  if (dbgFps) {
+    const fps = PCM.perf.fps;
+    const fc = fps >= 55 ? 'ok' : fps >= 30 ? 'warn' : 'bad';
+    dbgFps.textContent = fps + ' fps';
+    dbgFps.className = 'sval ' + fc;
+    COL(EL('dbg-sc-fps'), fps < 30 ? 90 : fps < 55 ? 50 : 10);
+  }
+
+  if (dbgMem) {
+    const mem = performance.memory ? {
+      used: (performance.memory.usedJSHeapSize / 1048576).toFixed(0),
+      total: (performance.memory.totalJSHeapSize / 1048576).toFixed(0),
+      limit: (performance.memory.jsHeapSizeLimit / 1048576).toFixed(0)
+    } : null;
+    dbgMem.innerHTML = mem
+      ? '<div class="sys-row"><span>JS Heap Used</span><span>' + mem.used + ' MB</span></div><div class="sys-row"><span>JS Heap Total</span><span>' + mem.total + ' MB</span></div><div class="sys-row"><span>JS Heap Limit</span><span>' + mem.limit + ' MB</span></div><div class="sys-row"><span>Utilization</span><span>' + Math.round(mem.used / mem.limit * 100) + '%</span></div>'
+      : '<div class="note">Memory API not available (Chrome only)</div>';
+    setSkeleton('dbg-mem-sk', 'dbg-mem', !data || !data._loading);
+  }
+
+  const isLoading = data && data._loading;
+  const dbgTl = EL('dbg-timeline');
+  if (dbgTl) {
+    const connIcons = { websocket: '⚡', sse: '🔌', http: '🔄' };
+    dbgTl.innerHTML = '' +
+      '<div class="sys-row"><span>Status</span><span style="color:' + (isLoading ? 'var(--warn)' : 'var(--ok)') + '">' + (isLoading ? 'Collecting data...' : 'Live') + '</span></div>' +
+      '<div class="sys-row"><span>Connection</span><span>' + (connIcons[PCM.connectionMethod] || '?') + ' ' + PCM.connectionMethod + '</span></div>' +
+      '<div class="sys-row"><span>Fast Metrics</span><span>' + PCM.refreshInterval + 'ms</span></div>' +
+      '<div class="sys-row"><span>Tables</span><span>' + PCM.TABLE_UPDATE_INTERVAL + 'ms</span></div>' +
+      '<div class="sys-row"><span>Static</span><span>~30000ms</span></div>' +
+      '<div class="sys-row"><span>Data Age</span><span>' + (PCM.cachedData && !isLoading ? ((Date.now() - PCM.perfTimer) / 1000).toFixed(1) + 's ago' : '—') + '</span></div>' +
+      '<div class="sys-row"><span>Collector</span><span>' + esc((data && data.collection_state) || 'valid') + '</span></div>' +
+      '<div class="sys-row"><span>Processes</span><span>' + (data ? data.total_procs : '—') + '</span></div>' +
+      '<div class="sys-row"><span>DOM Nodes</span><span>' + document.querySelectorAll('*').length + '</span></div>';
+    setSkeleton('dbg-timeline-sk', 'dbg-timeline', !isLoading);
+  }
+
+  const dbgSys = EL('dbg-sys-metrics');
+  if (dbgSys && data) {
+    dbgSys.innerHTML = isLoading
+      ? '<div class="note">Waiting for data collection...</div>'
+      : '<div class="sys-row"><span>RAM Usage</span><span>' + fmtNum(data.ram_pct) + '% (' + data.ram_used_gb + ' GB / ' + data.ram_total_gb + ' GB)</span></div>' +
+        '<div class="sys-row"><span>CPU</span><span>' + fmtNum(data.cpu_pct) + '%</span></div>' +
+        '<div class="sys-row"><span>Commit</span><span>' + fmtNum(data.commit_pct) + '% (' + data.commit_gb + ' GB)</span></div>' +
+        '<div class="sys-row"><span>GPU 3D</span><span>' + (data.gpu && data.gpu.available ? fmtNum(data.gpu.eng_type_totals['3d']) + '%' : 'N/A') + '</span></div>' +
+        '<div class="sys-row"><span>Pages/sec</span><span>' + fmtNum(data.pages_sec || 0) + '</span></div>' +
+        '<div class="sys-row"><span>Non-Paged Pool</span><span>' + fmtMem(data.non_paged_mb || 0) + '</span></div>' +
+        '<div class="sys-row"><span>Perf (BE)</span><span>' + (data._perf_ms ? data._perf_ms + ' ms' : '—') + '</span></div>';
+    setSkeleton('dbg-sys-metrics-sk', 'dbg-sys-metrics', !isLoading);
+  }
+
+  const dbgCache = EL('dbg-cache');
+  if (dbgCache) {
+    const connIcons = { websocket: '⚡', sse: '🔌', http: '🔄' };
+    const connLabels = { websocket: 'WS Connected', sse: 'SSE Connected', http: 'HTTP Polling' };
+    const connColor = PCM.connectionMethod === 'websocket' || PCM.connectionMethod === 'sse' ? 'var(--ok)' : 'var(--warn)';
+    dbgCache.innerHTML = '' +
+      '<div class="sys-row"><span>Status</span><span style="color:' + (isLoading || PCM.pollInFlight ? 'var(--warn)' : 'var(--ok)') + '">' + (isLoading || PCM.pollInFlight ? 'Collecting...' : 'Ready') + '</span></div>' +
+      '<div class="sys-row"><span>Connection</span><span style="color:' + connColor + '">' + (connIcons[PCM.connectionMethod] || '?') + ' ' + (connLabels[PCM.connectionMethod] || PCM.connectionMethod) + '</span></div>' +
+      '<div class="sys-row"><span>Fast Metrics</span><span>' + PCM.refreshInterval + 'ms</span></div>' +
+      '<div class="sys-row"><span>Full Tables</span><span>' + PCM.TABLE_UPDATE_INTERVAL + 'ms</span></div>';
+    setSkeleton('dbg-cache-sk', 'dbg-cache', !isLoading);
+  }
+
+  const dbgErrCount = EL('js-err-count');
+  const dbgErrList = EL('js-errors');
+  const dbgPsErrs = EL('dbg-ps-errs');
+  if (dbgErrCount) dbgErrCount.textContent = PCM.errors.length;
+  if (dbgErrList) {
+    if (PCM.errors.length === 0) dbgErrList.innerHTML = '<div class="note">No errors detected</div>';
+    else dbgErrList.innerHTML = PCM.errors.slice(-20).reverse().map(e => {
+      const d = new Date(e.ts);
+      const time = d.toLocaleTimeString();
+      const info = e.line ? ' at ' + (e.src || '') + ':' + e.line : '';
+      return '<div class="err-entry ' + (e.type || 'error') + '"><span class="err-time">' + time + '</span><span class="err-type">' + (e.type || 'ERROR').toUpperCase() + '</span><span class="err-msg">' + esc(e.msg) + info + '</span></div>';
+    }).join('');
+  }
+  if (dbgPsErrs) {
+    const psErrBanner = EL('ps-errors');
+    if (psErrBanner && psErrBanner.textContent) dbgPsErrs.innerHTML = esc(psErrBanner.textContent);
+  }
+}
+
+/* ── FPS tracking ───────────────────────────────────────────────── */
+function trackFPS(ts) {
+  PCM.perf.fpsFrames++;
+  if (ts - PCM.perf.fpsLast >= 1000) {
+    PCM.perf.fps = PCM.perf.fpsFrames;
+    PCM.perf.fpsFrames = 0;
+    PCM.perf.fpsLast = ts;
+  }
+  requestAnimationFrame(trackFPS);
+}
+requestAnimationFrame(trackFPS);
+
+/* ── Tabs ────────────────────────────────────────────────────────── */
+function initTabs() {
+  const tabs = document.querySelectorAll('.ntab');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('on'));
+      tab.classList.add('on');
+      document.querySelectorAll('.pg').forEach(p => p.classList.remove('on'));
+      const target = document.getElementById('pg-' + tab.dataset.page);
+      if (target) target.classList.add('on');
+      if (tab.dataset.page === 'debug' && PCM.cachedData) updateDebugPanel(PCM.cachedData);
+      setTimeout(() => refreshSparklines(PCM.history.cpu.slice(-1)[0] || 0, PCM.history.ram.slice(-1)[0] || 0, PCM.history.disk.slice(-1)[0] || 0), 50);
+    });
+  });
+}
+
+/* ── Refresh selector ────────────────────────────────────────────── */
+function updateSettingsConnInfo() {
+  const statusEl = EL('set-conn-status');
+  const methodEl = EL('set-conn-method');
+  const refreshEl = EL('set-refresh-val');
+  const latencyEl = EL('set-latency');
+  const connLabels = { websocket: '⚡ WebSocket (Fastest)', sse: '🔌 SSE (Fast)', http: '🔄 HTTP Polling' };
+  const isConnected = (PCM.eventSource && PCM.eventSource.readyState === EventSource.OPEN) || (PCM.wsSocket && PCM.wsSocket.readyState === WebSocket.OPEN);
+  if (statusEl) statusEl.textContent = isConnected ? 'Connected' : 'Disconnected';
+  if (methodEl) methodEl.textContent = connLabels[PCM.connectionMethod] || PCM.connectionMethod;
+  if (refreshEl) refreshEl.textContent = PCM.refreshInterval + ' ms';
+  if (latencyEl) latencyEl.textContent = PCM.perf.fetchMs > 0 ? PCM.perf.fetchMs.toFixed(1) + ' ms' : '—';
+  const methodDisplayEl = EL('method-display');
+  if (methodDisplayEl) methodDisplayEl.textContent = (connLabels[PCM.connectionMethod] || PCM.connectionMethod);
+}
+
+function initRefreshSelector() {
+  const sel = EL('rf-sel');
+  const settingsSel = EL('rf-sel-settings');
+  if (!sel) return;
+
+  const updateRefresh = (rate) => {
+    PCM.refreshInterval = rate;
+    if (sel) sel.value = String(rate);
+    if (settingsSel) settingsSel.value = String(rate);
+    try {
+      fetch('/api/refresh-rate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshRate: rate })
+      }).catch(e => { /* refresh-rate save is advisory; next poll will reconcile */ });
+    } catch (e) { /* refresh-rate save is advisory; next poll will reconcile */ }
+    if (PCM.connectionMethod === 'http') {
+      clearTimeout(PCM.pollTimer);
+      PCM.pollTimer = null;
+      PCM.pollInFlight = false;
+      fetchData();
+    }
+    updateSettingsConnInfo();
+  };
+
+  sel.addEventListener('change', () => {
+    const rate = Math.min(10000, Math.max(500, parseInt(sel.value, 10) || 500));
+    updateRefresh(rate);
+  });
+
+  if (settingsSel) {
+    settingsSel.addEventListener('change', () => {
+      if (sel) sel.value = settingsSel.value;
+      const rate = Math.min(10000, Math.max(500, parseInt(settingsSel.value, 10) || 500));
+      updateRefresh(rate);
+    });
+  }
+}
+
+/* ── Search filters ──────────────────────────────────────────────── */
+function initSearchFilters() {
+  const procsSearch = EL('procs-search');
+  if (procsSearch) {
+    procsSearch.addEventListener('input', () => {
+      const q = procsSearch.value.toLowerCase();
+      const rows = EL('all-tbl')?.querySelectorAll('tbody tr') || [];
+      rows.forEach(tr => {
+        const name = (tr.cells[0]?.textContent || '').toLowerCase();
+        tr.style.display = name.includes(q) ? '' : 'none';
+      });
+    });
+  }
+}
+
+/* ── Snapshots ──────────────────────────────────────────────────── */
+function initSnapshots() {
+  renderSnapshots();
+  const saveBtn = EL('btn-save-snap');
+  if (saveBtn) saveBtn.addEventListener('click', async () => {
+    const label = prompt('Snapshot label (optional):', '');
+    if (label === null) return;
+    try {
+      await fetch('/api/snapshots', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label })
+      });
+      renderSnapshots();
+    } catch (e) { alert('Failed to save snapshot'); }
+  });
+}
+
+async function renderSnapshots() {
+  const sk = EL('snapshots-tbl-sk');
+  const tbl = EL('snapshots-tbl');
+  if (!tbl) return;
+  const snapshots = await fetchSnapshots();
+  if (sk) sk.style.display = 'none';
+  tbl.style.display = '';
+  if (!snapshots || snapshots.length === 0) {
+    tbl.innerHTML = '<tbody><tr><td colspan="5"><div class="note">No snapshots yet. Click Save Snapshot to create one.</div></td></tr></tbody>';
+    return;
+  }
+  let html = '<tbody>';
+  snapshots.forEach(s => {
+    html += '<tr>' +
+      '<td>' + esc(s.ts) + '</td>' +
+      '<td>' + esc(s.label || '') + '</td>' +
+      '<td><button class="btn-sm snap-action" data-action="compare" data-id="' + esc(s.id || '') + '">Compare</button></td>' +
+      '<td><button class="btn-sm snap-action" data-action="export-json" data-id="' + esc(s.id || '') + '">JSON</button>' +
+          '<button class="btn-sm snap-action" data-action="export-csv" data-id="' + esc(s.id || '') + '">CSV</button></td>' +
+      '<td><button class="btn-sm btn-danger snap-action" data-action="delete" data-id="' + esc(s.id || '') + '">X</button></td>' +
+      '</tr>';
+  });
+  html += '</tbody>';
+  tbl.innerHTML = html;
+  tbl.querySelectorAll('.snap-action').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id || '';
+      if (!id) return;
+      if (btn.dataset.action === 'compare') compareSnapshot(id);
+      if (btn.dataset.action === 'export-json') exportSnapshot(id, 'json');
+      if (btn.dataset.action === 'export-csv') exportSnapshot(id, 'csv');
+      if (btn.dataset.action === 'delete') deleteSnapshot(id);
+    });
+  });
+}
+
+/* ── Thresholds ──────────────────────────────────────────────────── */
+const THRESHOLD_DEFS = [
+  { key: 'ram_pct', label: 'RAM Usage %', min: 0, max: 100 },
+  { key: 'cpu_pct', label: 'CPU Usage %', min: 0, max: 100 },
+  { key: 'commit_pct', label: 'Commit Charge %', min: 0, max: 100 },
+  { key: 'pages_sec', label: 'Pages/sec', min: 0, max: 50000 },
+  { key: 'non_paged_mb', label: 'Non-Paged Pool MB', min: 0, max: 10000 },
+  { key: 'disk_pct', label: 'Disk Usage %', min: 0, max: 100 },
+  { key: 'gpu_pct', label: 'GPU Usage %', min: 0, max: 100 },
+  { key: 'net_sent_kb', label: 'Network Sent KB/s', min: 0, max: 100000 },
+  { key: 'net_recv_kb', label: 'Network Recv KB/s', min: 0, max: 100000 }
+];
+
+function renderThresholds() {
+  const container = EL('thresholds-form');
+  const skeleton = EL('thresholds-form-sk');
+  if (!container) return;
+  container.innerHTML = THRESHOLD_DEFS.map(t =>
+    '<div class="threshold-row"><label>' + esc(t.label) + '</label><input type="number" data-key="' + t.key + '" value="' + (PCM.thresholds[t.key] || 0) + '" min="' + t.min + '" max="' + t.max + '"></div>'
+  ).join('');
+  if (skeleton) skeleton.style.display = 'none';
+  if (container) container.style.display = 'block';
+}
+
+async function saveThresholdsFromForm() {
+  const container = EL('thresholds-form');
+  const msgEl = EL('thresholds-msg');
+  const saveBtn = EL('btn-save-thresholds');
+  if (!container) return;
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
+  const thresholds = {};
+  container.querySelectorAll('input[data-key]').forEach(input => { thresholds[input.dataset.key] = parseFloat(input.value) || 0; });
+  const ok = await saveThresholds(thresholds);
+  if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Thresholds'; }
+  if (msgEl) {
+    msgEl.textContent = ok ? 'Saved!' : 'Error saving';
+    msgEl.style.color = ok ? 'var(--ok)' : 'var(--bad)';
+    setTimeout(() => { if (msgEl) msgEl.textContent = ''; }, 2000);
+  }
+}
+
+function initThresholds() { renderThresholds(); const saveBtn = EL('btn-save-thresholds'); if (saveBtn) saveBtn.addEventListener('click', saveThresholdsFromForm); }
+
+/* ── Export ───────────────────────────────────────────────────────── */
+function initExportButton() {
+  const exportBtn = EL('btn-export-data');
+  const exportMsg = EL('export-msg');
+  if (exportBtn) exportBtn.addEventListener('click', async () => {
+    exportBtn.disabled = true;
+    exportBtn.textContent = 'Exporting...';
+    const ok = await exportAllData();
+    if (exportMsg) {
+      exportMsg.textContent = ok ? 'Exported!' : 'Error';
+      exportMsg.style.color = ok ? 'var(--ok)' : 'var(--bad)';
+      setTimeout(() => { if (exportMsg) exportMsg.textContent = ''; }, 2000);
+    }
+    exportBtn.disabled = false;
+    exportBtn.textContent = 'Export All Data (JSON)';
+  });
+}
+
+/* ── Report ──────────────────────────────────────────────────────── */
+function initReportButtons() {
+  const openBtn = EL('btn-open-report');
+  if (openBtn) openBtn.addEventListener('click', async () => {
+    const report = await fetchReport();
+    const win = window.open('', '_blank');
+    if (win) { win.document.write(report); win.document.close(); }
+  });
+  const dlBtn = EL('btn-dl-report');
+  if (dlBtn) dlBtn.addEventListener('click', fetchReportDownload);
+  const compareBtn = EL('btn-compare-snap');
+  if (compareBtn) compareBtn.addEventListener('click', () => { const id = prompt('Enter snapshot ID to compare:'); if (id) compareSnapshot(id); });
+}
+
+async function compareSnapshot(id) {
+  const resultEl = EL('compare-result');
+  if (resultEl) resultEl.innerHTML = '<div class="note">Comparing...</div>';
+  try {
+    const data = await compareSnapshots(id);
+    if (resultEl) {
+      if (data.error) { resultEl.innerHTML = '<div class="note" style="color:var(--bad)">' + esc(data.error) + '</div>'; return; }
+      if (!data.changes || data.changes.length === 0) { resultEl.innerHTML = '<div class="note">No changes detected.</div>'; return; }
+      let html = '<div class="compare-summary"><strong>Snapshot:</strong> ' + esc(data.snapshot_ts) + ' → <strong>Now:</strong> ' + esc(data.current_ts) + '</div>';
+      data.changes.forEach(c => {
+        const color = c.new > c.old ? 'var(--bad)' : c.new < c.old ? 'var(--ok)' : 'var(--dim)';
+        const diff = c.old !== undefined && c.new !== undefined ? (c.new - c.old).toFixed(1) : '';
+        let extra = '';
+        if (c.name === 'Top RAM Process' && c.processes) extra = '<div class="compare-procs">' + c.processes.slice(0, 5).map(p => '<span>' + esc(p.name) + ' (' + fmtMem(p.ws_mb) + ')</span>').join('') + (c.count > 5 ? '<span>+' + (c.count - 5) + ' more</span>' : '') + '</div>';
+        html += '<div class="compare-item"><span class="compare-name">' + esc(c.name) + '</span><span class="compare-diff" style="color:' + color + '">' + diff + (c.old !== undefined ? ' (' + c.old + '→' + c.new + '%)' : '') + '</span>' + extra + '</div>';
+      });
+      resultEl.innerHTML = html;
+    }
+  } catch (e) { if (resultEl) resultEl.innerHTML = '<div class="note" style="color:var(--bad)">Error comparing snapshot</div>'; }
+}
+
+/* ── Resize ──────────────────────────────────────────────────────── */
+window.addEventListener('resize', () => {
+  clearTimeout(PCM.resizeTimer);
+  PCM.resizeTimer = setTimeout(() => {
+    refreshSparklines(PCM.history.cpu.slice(-1)[0] || 0, PCM.history.ram.slice(-1)[0] || 0, PCM.history.disk.slice(-1)[0] || 0);
+  }, 100);
+});
+
+/* ── Expose globals ─────────────────────────────────────────────── */
+window.killProcess = killProcess;
+window.suspendProcess = suspendProcess;
+window.resumeProcess = resumeProcess;
+window.copyTableToClipboard = copyTableToClipboard;
+window.compareSnapshot = compareSnapshot;
+window.exportSnapshot = exportSnapshot;
+window.deleteSnapshot = deleteSnapshot;
+
+/* ── Boot ────────────────────────────────────────────────────────── */
+async function start() {
+  showAllSkeletons();
+  initTabs();
+  initRefreshSelector();
+  initSearchFilters();
+  initSnapshots();
+  initThresholds();
+  initReportButtons();
+  initExportButton();
+  initStream();
+  loadBootstrap().finally(() => {
+    if (PCM.connectionMethod === 'http' || PCM.connectionMethod === 'unknown') fetchData();
+  });
+}
+
+document.readyState === 'loading'
+  ? document.addEventListener('DOMContentLoaded', start)
+  : start();
+
+</script>
+</body>
+</html>
