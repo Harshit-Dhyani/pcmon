@@ -41,10 +41,13 @@ function Save-Snapshot {
 
 function Test-SnapshotId {
     param([string]$Id)
-    if ($Id -match '\.\.[/\\]' -or $Id -match '^[a-zA-Z]:' -or $Id -match '[/\\]') {
-        return $false
-    }
-    return $true
+    return ($Id -match '^\d{8}_\d{6}$')
+}
+
+function Get-SnapshotFileById {
+    param([string]$Id)
+    if (-not (Test-SnapshotId -Id $Id)) { return $null }
+    return Get-SnapshotFiles | Where-Object { $_.BaseName -eq "snapshot_$Id" } | Select-Object -First 1
 }
 
 function Compare-Snapshots {
@@ -52,8 +55,7 @@ function Compare-Snapshots {
     if (-not (Test-SnapshotId -Id $SnapshotId)) {
         return @{ error = "Invalid snapshot ID" }
     }
-    $files = Get-SnapshotFiles
-    $snapshotFile = $files | Where-Object { $_.BaseName -eq "snapshot_$SnapshotId" } | Select-Object -First 1
+    $snapshotFile = Get-SnapshotFileById -Id $SnapshotId
     if (-not $snapshotFile) { return @{ error = "Snapshot not found" } }
     $snapshot = Get-Content $snapshotFile.FullName | ConvertFrom-Json
     if (Test-Path $cacheFile) {

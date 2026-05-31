@@ -5,7 +5,11 @@ function Write-Log {
     $entry = "[$ts] [$Level] $Message"
     if ($Level -ne "DEBUG" -or $script:DebugMode) { $script:Errors += $entry }
     if ($script:Errors.Count -gt 100) { $script:Errors = @($script:Errors | Select-Object -Last 100) }
-    try { $entry | Out-File -FilePath $LOG_FILE -Append -Encoding UTF8 -ErrorAction Stop } catch {}
+    try {
+        $entry | Out-File -FilePath $LOG_FILE -Append -Encoding UTF8 -ErrorAction Stop
+    } catch {
+        if ($script:DebugMode) { Write-Host "[pcmon] log write failed: $($_.Exception.Message)" -ForegroundColor DarkGray }
+    }
 }
 
 function Write-Err {

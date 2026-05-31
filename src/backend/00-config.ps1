@@ -49,10 +49,28 @@ $HOSTNAME = "localhost"
 $OPEN_BROWSER = -not ($NoOpen -or $ApiOnly)
 if ($Port -gt 65535) { $Port = 65535 }
 # Auto-bump the listener port when the requested one is already occupied.
+$listenerProbeSucceeded = $false
 for ($i = 0; $i -lt 20; $i++) {
-    $test = New-Object System.Net.HttpListener
-    $test.Prefixes.Add("http://${HOSTNAME}:$Port/")
-    try { $test.Start(); $test.Stop(); break } catch { $Port++; $test.Abort() }
+    $test = $null
+    try {
+        $test = New-Object System.Net.HttpListener
+        $test.Prefixes.Add("http://${HOSTNAME}:$Port/")
+        $test.Start()
+        $test.Stop()
+        $listenerProbeSucceeded = $true
+        break
+    } catch {
+        if ($null -eq $test) {
+            Write-Host "[pcmon] HttpListener is not available in this PowerShell host: $($_.Exception.Message)" -ForegroundColor Red
+            exit 1
+        }
+        $Port++
+        try { $test.Abort() } catch { Write-Host "[pcmon] Warning: listener probe cleanup failed: $($_.Exception.Message)" -ForegroundColor Yellow }
+    }
+}
+if (-not $listenerProbeSucceeded) {
+    Write-Host "[pcmon] Unable to reserve a local listener port starting from $($Port - 20)." -ForegroundColor Red
+    exit 1
 }
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WEB_DIR = Join-Path $SCRIPT_DIR "web"
@@ -86,6 +104,11 @@ if (-not (Test-Path $SNAPSHOTS_DIR)) { New-Item -ItemType Directory -Path $SNAPS
 $cacheFile = Join-Path $env:TEMP "pcmon_live_cache_$Port.json"
 
 $PROTECTED_PROCESSES = @('System', 'Idle', 'csrss', 'smss', 'wininit', 'services', 'lsass', 'svchost', 'winlogon', 'dwm', 'explorer', 'taskhostw', 'sihost', 'ctfmon', 'fontdrvhost', 'Memory Compression')
+$PROCESS_GROUPS = @{
+    browser = @('msedge', 'arc', 'chrome', 'opera', 'brave', 'firefox', 'electron', 'librewolf')
+    dev_tools = @('node', 'bun', 'python', 'java', 'code', 'webstorm', 'rider', 'idea', 'pycharm', 'goland', 'datagrip', 'phpstorm', 'ruby', 'rust', 'cargo', 'opencode', 'codex', 'chatgpt', 'pieces', 'os-server')
+    security = @('msmpeng', 'malware', 'mbam', 'glasswire', 'portmaster', 'defender', 'avast', 'kaspersky', 'bitdefender', 'eset')
+}
 
 $script:AlertThresholds = @{
     ram_pct = 85
@@ -106,6 +129,6 @@ if (Test-Path $configPath) {
         foreach ($key in $saved.PSObject.Properties.Name) {
             $script:AlertThresholds[$key] = $saved.$key
         }
-    } catch { }
+    } catch { Write-Host "[pcmon] Warning: config load failed: $($_.Exception.Message)" -ForegroundColor Yellow }
 }
 #endregion

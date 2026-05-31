@@ -30,6 +30,7 @@ function Resume-ProcessById {
     param([int]$ProcessId)
     $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
     if (-not $proc) { return @{ success = $false; error = "Process not found" } }
+    if ($PROTECTED_PROCESSES -contains $proc.ProcessName) { return @{ success = $false; error = "Cannot resume protected system process" } }
     try {
         $proc.Resume()
         return @{ success = $true; message = "Process $($proc.ProcessName) resumed" }
