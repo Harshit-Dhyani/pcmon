@@ -2,39 +2,54 @@
 function Get-CachedStaticData {
     $now = Get-Date
     if ($script:StaticCacheExpiry -gt $now) { return }
-    $drives = @(Get-CimInstance Win32_LogicalDisk -Property DeviceID, VolumeName, FileSystem, Size, FreeSpace -ErrorAction SilentlyContinue | Where-Object { $_.DriveType -eq 3 })
+    $previous = $script:CachedStatic
+    $drives = @(Get-CimInstance Win32_LogicalDisk -Property DeviceID, VolumeName, FileSystem, Size, FreeSpace, DriveType -ErrorAction SilentlyContinue | Where-Object { $_.DriveType -eq 3 })
     if ($drives.Count -eq 0) {
         try {
             $wmiDrives = @(Get-WmiObject Win32_LogicalDisk -ErrorAction SilentlyContinue | Where-Object { $_.DriveType -eq 3 })
             if ($wmiDrives.Count -gt 0) { $drives = $wmiDrives }
-        } catch {}
+        } catch { Write-Log "Drive fallback collection failed: $($_.Exception.Message)" "DEBUG" }
     }
+    if ($drives.Count -eq 0 -and $previous -and $previous.Drives) { $drives = $previous.Drives }
+    $services = @(Get-CimInstance Win32_Service -Property Name, DisplayName, State, StartMode, ProcessId -ErrorAction SilentlyContinue)
+    if ($services.Count -eq 0 -and $previous -and $previous.Services) { $services = $previous.Services }
+    $startup = @(Get-CimInstance Win32_StartupCommand -Property Name, Command, Location, User -ErrorAction SilentlyContinue)
+    if ($startup.Count -eq 0 -and $previous -and $previous.Startup) { $startup = $previous.Startup }
+    $video = @(Get-CimInstance Win32_VideoController -Property Name, AdapterRAM, Status -ErrorAction SilentlyContinue)
+    if ($video.Count -eq 0 -and $previous -and $previous.Video) { $video = $previous.Video }
+    $cpu = @(Get-CimInstance Win32_Processor -Property Name, NumberOfCores, NumberOfLogicalProcessors, MaxClockSpeed, CurrentClockSpeed, SocketDesignation, Status -ErrorAction SilentlyContinue)
+    if ($cpu.Count -eq 0 -and $previous -and $previous.CPU) { $cpu = $previous.CPU }
+    $netAdapters = @(try { Get-NetAdapter -Physical -ErrorAction Stop | Select-Object Name, InterfaceDescription, Status, LinkSpeed, MediaType, PhysicalMediaType, MacAddress } catch { Write-Log "Network adapter collection failed: $($_.Exception.Message)" "DEBUG"; @() })
+    if ($netAdapters.Count -eq 0 -and $previous -and $previous.NetAdapters) { $netAdapters = $previous.NetAdapters }
     $script:CachedStatic = @{
         Drives = $drives
-        Services = @(Get-CimInstance Win32_Service -Property Name, DisplayName, State, StartMode, ProcessId -ErrorAction SilentlyContinue)
-        Startup = @(Get-CimInstance Win32_StartupCommand -Property Name, Command, Location, User -ErrorAction SilentlyContinue)
-        OS = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
-        Video = @(Get-CimInstance Win32_VideoController -Property Name, AdapterRAM, Status -ErrorAction SilentlyContinue)
-        CPU = @(Get-CimInstance Win32_Processor -Property Name, NumberOfCores, NumberOfLogicalProcessors, MaxClockSpeed, CurrentClockSpeed, SocketDesignation, Status -ErrorAction SilentlyContinue)
-        NetAdapters = @(try { Get-NetAdapter -Physical -ErrorAction Stop | Select-Object Name, InterfaceDescription, Status, LinkSpeed, MediaType, PhysicalMediaType, MacAddress } catch { @() })
+        Services = $services
+        Startup = $startup
+        OS = if ($previous -and $previous.OS) { Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue | ForEach-Object { $_ } } else { Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue }
+        Video = $video
+        CPU = $cpu
+        NetAdapters = $netAdapters
         PageFile = @()
         PSProfiles = @()
     }
+    if (-not $script:CachedStatic.OS -and $previous -and $previous.OS) { $script:CachedStatic.OS = $previous.OS }
     try {
         foreach ($pf in @(Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue)) {
             $script:CachedStatic.PageFile += [PSCustomObject]@{ name = $pf.Name; allocated_mb = $pf.AllocatedBaseSize; current_usage_mb = $pf.CurrentUsage; peak_usage_mb = $pf.PeakUsage }
         }
-    } catch {}
+    } catch { Write-Log "Page file collection failed: $($_.Exception.Message)" "DEBUG" }
+    if ($script:CachedStatic.PageFile.Count -eq 0 -and $previous -and $previous.PageFile) { $script:CachedStatic.PageFile = $previous.PageFile }
     try {
         $profilePaths = @($PROFILE.AllUsersAllHosts, $PROFILE.AllUsersCurrentHost, $PROFILE.CurrentUserAllHosts, $PROFILE.CurrentUserCurrentHost)
         foreach ($pp in $profilePaths) {
             if ($pp) {
                 $exists = Test-Path $pp -ErrorAction SilentlyContinue
-                $sizeKb = if ($exists) { try { [math]::Round((Get-Item $pp).Length / 1KB, 1) } catch { $null } } else { $null }
+                $sizeKb = if ($exists) { try { [math]::Round((Get-Item $pp).Length / 1KB, 1) } catch { Write-Log "Profile size read failed for $pp`: $($_.Exception.Message)" "DEBUG"; $null } } else { $null }
                 $script:CachedStatic.PSProfiles += [PSCustomObject]@{ path = $pp; exists = $exists; size_kb = $sizeKb }
             }
         }
-    } catch {}
+    } catch { Write-Log "PowerShell profile collection failed: $($_.Exception.Message)" "DEBUG" }
+    if ($script:CachedStatic.PSProfiles.Count -eq 0 -and $previous -and $previous.PSProfiles) { $script:CachedStatic.PSProfiles = $previous.PSProfiles }
     $script:StaticCacheExpiry = $now.AddSeconds(60)
 }
 
@@ -47,6 +62,12 @@ function Get-CachedCommandLines {
     foreach ($c in $cmds) {
         $script:CommandLines[$c.ProcessId] = @{ cmd = $c.CommandLine; exe_path = $c.ExecutablePath }
     }
+}
+
+function Test-ProcessNameInGroup {
+    param([string]$Name, [string]$Group)
+    if ([string]::IsNullOrWhiteSpace($Name) -or -not $PROCESS_GROUPS.ContainsKey($Group)) { return $false }
+    return ($PROCESS_GROUPS[$Group] -contains $Name.ToLowerInvariant())
 }
 
 function Get-CounterSampleValue {
@@ -113,7 +134,7 @@ function Get-LiveData {
                     return $script:LiveDataCache
                 }
             }
-        } catch {}
+        } catch { Write-Log "Cache file read failed: $($_.Exception.Message)" "DEBUG" }
     }
     if ($script:LiveDataCollectionStatus -eq "busy" -and $null -ne $script:LiveDataCache) {
         return $script:LiveDataCache
@@ -141,9 +162,9 @@ function _CollectLiveData {
         $samples = @()
         if ($systemCounters) { $samples += $systemCounters.CounterSamples }
         if ($gpuCounters) { $samples += $gpuCounters.CounterSamples }
-    } catch {}
+    } catch { Write-Log "Counter collection failed: $($_.Exception.Message)" "DEBUG" }
 
-    $os = if ($cs.OS) { $cs.OS } else { try { Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue } catch {} }
+    $os = if ($cs.OS) { $cs.OS } else { try { Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue } catch { Write-Log "OS metadata collection failed: $($_.Exception.Message)" "DEBUG"; $null } }
     $cpuMeta = if ($cs.CPU) { @($cs.CPU) } else { @() }
 
     $totalRAMMB = if ($os) { [math]::Round($os.TotalVisibleMemorySize / 1024, 0) } else { 0 }
@@ -174,7 +195,7 @@ function _CollectLiveData {
                 command_line = if ($extra) { $extra.cmd } else { $null }
             }
         })
-    } catch { $processes = @() }
+    } catch { Write-Log "Process collection failed: $($_.Exception.Message)" "DEBUG"; $processes = @() }
 
     $by_ram = @($processes | Sort-Object ws_mb -Descending | Select-Object -First 30)
     $by_private = @($processes | Sort-Object private_mb -Descending | Select-Object -First 30)
@@ -183,14 +204,11 @@ function _CollectLiveData {
     $browserGroup = @{ ws_mb = 0.0; count = 0 }
     $devGroup = @{ ws_mb = 0.0; count = 0 }
     $secGroup = @{ ws_mb = 0.0; count = 0 }
-    $browserPattern = 'msedge|arc|chrome|opera|brave|firefox|electron|librewolf'
-    $devPattern = 'node|bun|python|java|code|webstorm|rider|idea|pycharm|goland|datagrip|phpstorm|ruby|rust|cargo|opencode|codex|chatgpt|pieces|os-server'
-    $secPattern = 'msmpeng|malware|mbam|glasswire|portmaster|defender|avast|kaspersky|bitdefender|eset'
     foreach ($p in $processes) {
         $n = $p.name.ToLowerInvariant()
-        if ($n -match $browserPattern) { $browserGroup.ws_mb += $p.ws_mb; $browserGroup.count++ }
-        elseif ($n -match $devPattern) { $devGroup.ws_mb += $p.ws_mb; $devGroup.count++ }
-        elseif ($n -match $secPattern) { $secGroup.ws_mb += $p.ws_mb; $secGroup.count++ }
+        if (Test-ProcessNameInGroup -Name $n -Group 'browser') { $browserGroup.ws_mb += $p.ws_mb; $browserGroup.count++ }
+        elseif (Test-ProcessNameInGroup -Name $n -Group 'dev_tools') { $devGroup.ws_mb += $p.ws_mb; $devGroup.count++ }
+        elseif (Test-ProcessNameInGroup -Name $n -Group 'security') { $secGroup.ws_mb += $p.ws_mb; $secGroup.count++ }
     }
     $browserGroup.ws_mb = [math]::Round($browserGroup.ws_mb, 1)
     $devGroup.ws_mb = [math]::Round($devGroup.ws_mb, 1)
@@ -253,11 +271,11 @@ function _CollectLiveData {
     $memAvailGB = [math]::Round($memAvailMB / 1024, 1)
     $pagedPoolBytes = Get-CounterSampleValue -Samples $samples -Pattern '\memory\pool paged bytes'
     if ($pagedPoolBytes -le 0 -or [double]::IsNaN($pagedPoolBytes)) {
-        try { $pagedPoolBytes = [double](Get-CimInstance Win32_PerfRawData_PerfOS_Memory -ErrorAction SilentlyContinue).PoolPagedBytes } catch { $pagedPoolBytes = 0 }
+        try { $pagedPoolBytes = [double](Get-CimInstance Win32_PerfRawData_PerfOS_Memory -ErrorAction SilentlyContinue).PoolPagedBytes } catch { Write-Log "Paged pool fallback failed: $($_.Exception.Message)" "DEBUG"; $pagedPoolBytes = 0 }
     }
     $nonPagedBytes = Get-CounterSampleValue -Samples $samples -Pattern '\memory\pool nonpaged bytes'
     if ($nonPagedBytes -le 0 -or [double]::IsNaN($nonPagedBytes)) {
-        try { $nonPagedBytes = [double](Get-CimInstance Win32_PerfRawData_PerfOS_Memory -ErrorAction SilentlyContinue).PoolNonpagedBytes } catch { $nonPagedBytes = 0 }
+        try { $nonPagedBytes = [double](Get-CimInstance Win32_PerfRawData_PerfOS_Memory -ErrorAction SilentlyContinue).PoolNonpagedBytes } catch { Write-Log "Non-paged pool fallback failed: $($_.Exception.Message)" "DEBUG"; $nonPagedBytes = 0 }
     }
     $pagedPoolMB = [math]::Round($pagedPoolBytes / 1MB, 2)
     $pagedPoolPct = if ($totalRAMMB -gt 0) { [math]::Round($pagedPoolMB / $totalRAMMB * 100, 1) } else { 0 }
@@ -310,7 +328,7 @@ function _CollectLiveData {
         try {
             $used = $d.Size - $d.FreeSpace; $pct = if ($d.Size -gt 0) { [math]::Round(($used / $d.Size) * 100, 1) } else { 0 }
             $disks += [PSCustomObject]@{ drive = $d.DeviceID; label = $d.VolumeName; fs = $d.FileSystem; total_gb = [math]::Round($d.Size / 1GB, 1); used_gb = [math]::Round($used / 1GB, 1); free_gb = [math]::Round($d.FreeSpace / 1GB, 1); pct = $pct; state = if ($pct -ge 90) { 'bad' } elseif ($pct -ge 80) { 'warn' } else { 'ok' } }
-        } catch {}
+        } catch { Write-Log "Drive row render failed: $($_.Exception.Message)" "DEBUG" }
     }
 
     $pagefile = @()
@@ -341,18 +359,7 @@ function _CollectLiveData {
             $script:cpuTempSupported = $true
             if ($null -eq $script:SessionMaxCpuTempC -or $script:cpuTempC -gt $script:SessionMaxCpuTempC) { $script:SessionMaxCpuTempC = $script:cpuTempC }
         }
-        } catch {}
-
-    $script:cpuTempC = $null
-    $script:cpuTempSupported = $false
-    try {
-        $thermal = Get-CimInstance -ClassName Win32_PerfFormattedData_Counters_ThermalZoneInformation -ErrorAction SilentlyContinue | Where-Object { $_.Name -like '*TZ*' } | Select-Object -First 1
-        if ($null -ne $thermal -and $thermal.Temperature -gt 0) {
-            $script:cpuTempC = [math]::Round($thermal.Temperature / 10.0, 1)
-            $script:cpuTempSupported = $true
-            if ($null -eq $script:SessionMaxCpuTempC -or $script:cpuTempC -gt $script:SessionMaxCpuTempC) { $script:SessionMaxCpuTempC = $script:cpuTempC }
-        }
-    } catch {}
+        } catch { Write-Log "CPU thermal collection failed: $($_.Exception.Message)" "DEBUG" }
 
     return @{
         ts = (Get-Date -Format 'HH:mm:ss'); hostname = $env:COMPUTERNAME; os_caption = $osCaption; total_procs = $processes.Count; ram_pct = $ramPct
@@ -384,6 +391,16 @@ function _CollectLiveData {
             power_supported = $false
         }
         insights = $insights; gpu = $gpuResult; network = $network; groups = @{ browser = $browserGroup; dev_tools = $devGroup; security = $secGroup }
+        collection_state = if ($samples.Count -gt 0 -and $processes.Count -gt 0) { 'valid' } elseif ($script:LiveDataCache) { 'stale' } else { 'transiently_unavailable' }
+        cache_age_ms = [int]((Get-Date) - $script:LiveCacheTime).TotalMilliseconds
+        subsystems = @{
+            counters = if ($samples.Count -gt 0) { 'valid' } else { 'transiently_unavailable' }
+            processes = if ($processes.Count -gt 0) { 'valid' } else { 'transiently_unavailable' }
+            gpu = if ($gpuResult.available -and $gpuResult.engines_supported) { 'valid' } elseif ($gpuResult.available) { 'unsupported' } else { 'missing' }
+            network = if ($netAdapterRows.Count -gt 0) { 'valid' } else { 'missing' }
+            static = if ($disks.Count -gt 0 -or $startupItems.Count -gt 0) { 'valid' } else { 'transiently_unavailable' }
+        }
+        errors_recent = @($script:Errors | Select-Object -Last 5)
         _perf_ms = $perfMs; _loading = $false
     }
 }
