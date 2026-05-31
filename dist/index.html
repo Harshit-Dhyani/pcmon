@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- Built 2026-03-22 20:37:54 v1.0.0 | Source: web/src/ -->
-="UTF-8">
+<!-- Built 2026-03-25 13:37:41 v1.0.0 | Source: src/web/src/ -->
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>PC Monitor</title>
@@ -635,6 +635,35 @@ tbody td {
   line-height: 1.5;
 }
 .insight:last-child { margin-bottom: 0; }
+.insight.warn { border-left-color: var(--warn); background: rgba(255, 184, 77, 0.12); color: var(--text); }
+.insight.bad { border-left-color: var(--bad); background: rgba(255, 107, 107, 0.14); color: var(--text); }
+.insight.ok { border-left-color: var(--ok); background: rgba(81, 207, 102, 0.10); }
+.issue-hero {
+  margin-bottom: 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--r2);
+  background: linear-gradient(135deg, rgba(64, 145, 255, 0.12), rgba(255, 184, 77, 0.10));
+}
+.issue-kicker {
+  font-size: 10px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--text3);
+  margin-bottom: 6px;
+}
+.issue-title {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.issue-desc {
+  font-size: 12px;
+  color: var(--text2);
+  line-height: 1.5;
+}
 
 /* ── System Summary ─────────────────────────────────────────────────── */
 .sys-row {
@@ -1062,6 +1091,22 @@ tbody td {
         </div>
       </div>
     </div>
+
+    <div class="pnl" style="margin-top:14px">
+      <div class="pnl-head"><span class="pnl-title">Current Issues</span></div>
+      <div class="pnl-body">
+        <!-- Lead with the single highest-signal issue so the user does not have
+             to scan every card before seeing the likely bottleneck. -->
+        <div class="issue-hero" id="issue-hero">
+          <div class="issue-kicker">Main bottleneck</div>
+          <div class="issue-title" id="issue-primary-title">Waiting for live data…</div>
+          <div class="issue-desc" id="issue-primary-desc">pcmon will surface the most important issue first.</div>
+        </div>
+        <div id="insights-list">
+          <div class="note">Waiting for system insights…</div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- ── RAM ──────────────────────────────────────────────────────── -->
@@ -1145,6 +1190,18 @@ tbody td {
         <div class="scard-top"><span class="scard-lbl">Disk Queue</span></div>
         <div class="sval ok" id="c-queue">—</div>
         <div class="ssub">Pending I/O requests</div>
+      </div>
+    </div>
+
+    <div class="pnl" style="margin-bottom:16px">
+      <div class="pnl-head"><span class="pnl-title">CPU Details</span></div>
+      <div class="pnl-body" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">
+        <div class="sys-row"><span>Model</span><span id="cpu-name">—</span></div>
+        <div class="sys-row"><span>Sockets / Cores / Logical</span><span id="cpu-topology">—</span></div>
+        <div class="sys-row"><span>Base / Current Clock</span><span id="cpu-clocks">—</span></div>
+        <div class="sys-row"><span>Session Max Clock</span><span id="cpu-max-clock">—</span></div>
+        <div class="sys-row"><span>Temperature</span><span id="cpu-temp">—</span></div>
+        <div class="sys-row"><span>Package Power</span><span id="cpu-power">—</span></div>
       </div>
     </div>
 
@@ -1336,6 +1393,17 @@ tbody td {
         <table id="profiles-tbl" style="display:none"></table>
       </div>
     </div>
+    <div class="pnl" style="margin-top:16px">
+      <div class="pnl-head"><span class="pnl-title">Network Adapters</span></div>
+      <!-- The adapter table is intentionally on the System page because it is
+           machine inventory plus current link state, not just a live throughput chart. -->
+      <div class="tbl-scroll">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:5px" id="net-tbl-sk">
+          <div class="sk sk-row"></div>
+        </div>
+        <table id="net-tbl" style="display:none"></table>
+      </div>
+    </div>
   </div>
 
   <!-- ── ALL PROCESSES ────────────────────────────────────────────── -->
@@ -1521,6 +1589,15 @@ tbody td {
       <button type="button" id="btn-save-thresholds" class="btn-primary" style="margin-top:10px">Save Thresholds</button>
       <span id="thresholds-msg" style="margin-left:10px"></span>
     </div>
+
+    <div class="pnl" style="margin-top:16px">
+      <div class="pnl-head"><span class="pnl-title">Data Export</span></div>
+      <div class="pnl-body">
+        <p style="margin:0 0 10px 0;color:var(--dim)">Export all system data for AI analysis or backup.</p>
+        <button type="button" id="btn-export-data" class="btn-secondary">Export All Data (JSON)</button>
+        <span id="export-msg" style="margin-left:10px"></span>
+      </div>
+    </div>
   </div>
 
 </div><!-- /main -->
@@ -1541,7 +1618,6 @@ const PCM = {
   firstLoad: true,
   lastTableUpdate: 0,
   thresholds: {},
-  csrfToken: '',
   connectionMethod: 'unknown',
   eventSource: null,
   wsSocket: null,
@@ -1660,10 +1736,12 @@ function showAllSkeletons() {
   const cardIds = ['sc-ram', 'sc-cpu', 'sc-disk', 'sc-cm', 'r-sc-ram', 'r-sc-cm', 'r-sc-pg', 'c-sc-cpu', 'c-sc-pg'];
   cardIds.forEach(id => { const el = EL(id); if (el) el.classList.add('loading'); });
   const skPairs = [
+    // Keep skeleton mappings centralized so newly-added tables do not get stuck
+    // in loading state after render.
     ['ov-tbl-sk', 'ov-tbl'], ['r-tbl-sk', 'r-tbl'], ['c-tbl-sk', 'c-tbl'],
     ['sus-tbl-sk', 'sus-tbl'], ['svc-tbl-sk', 'svc-tbl'],
     ['startup-tbl-sk', 'startup-tbl'], ['pagefile-tbl-sk', 'pagefile-tbl'],
-    ['profiles-tbl-sk', 'profiles-tbl'], ['all-tbl-sk', 'all-tbl'],
+    ['profiles-tbl-sk', 'profiles-tbl'], ['net-tbl-sk', 'net-tbl'], ['all-tbl-sk', 'all-tbl'],
     ['ov-disks-sk', 'ov-disks'], ['disk-drives-sk', 'disk-drives'],
     ['disk-io-sk', 'disk-io-strip'], ['ov-io-sk', 'ov-io'],
     ['gpu-adapters-sk', 'gpu-adapters'], ['group-insights-sk', 'group-insights'],
@@ -1934,13 +2012,13 @@ function tryWebSocket() {
           updateDebugPanel(data);
           updateSettingsConnInfo();
         }
-      } catch (e) {}
+      } catch (e) { console.log('WS message parse error:', e); }
     };
     PCM.wsSocket.onerror = () => { PCM.connectionMethod = 'sse'; trySSE(); };
     PCM.wsSocket.onclose = () => {
       if (PCM.connectionMethod === 'websocket') { PCM.connectionMethod = 'sse'; trySSE(); }
     };
-  } catch (e) { PCM.connectionMethod = 'sse'; trySSE(); }
+  } catch (e) { console.log('WebSocket init error:', e); PCM.connectionMethod = 'sse'; trySSE(); }
 }
 
 /* ── SSE ──────────────────────────────────────────────────────────── */
@@ -1972,7 +2050,7 @@ function trySSE() {
           updateDebugPanel(data);
           updateSettingsConnInfo();
         }
-      } catch (e) {}
+      } catch (e) { console.log('SSE message parse error:', e); }
     };
     PCM.eventSource.onerror = () => {
       PCM.connectionMethod = 'http';
@@ -1981,7 +2059,7 @@ function trySSE() {
       PCM.wsReconnectDelay = Math.min(PCM.wsReconnectDelay * 1.5, PCM.wsMaxReconnectDelay);
       startHTTPPolling();
     };
-  } catch (e) { PCM.connectionMethod = 'http'; startHTTPPolling(); }
+  } catch (e) { console.log('SSE init error:', e); PCM.connectionMethod = 'http'; startHTTPPolling(); }
 }
 
 function initStream() { tryWebSocket(); }
@@ -1998,7 +2076,6 @@ function startHTTPPolling() {
 /* ── Auth ─────────────────────────────────────────────────────────── */
 function authHeaders(extra = {}) {
   const h = { 'Content-Type': 'application/json' };
-  if (PCM.csrfToken) h['X-PCMON-Token'] = PCM.csrfToken;
   Object.assign(h, extra);
   return h;
 }
@@ -2015,7 +2092,8 @@ async function fetchData() {
   if (PCM.connectionMethod === 'http') PCM.pollInFlight = true;
   const t0 = performance.now();
   try {
-    const res = await fetch('/data');
+    // Live data must bypass browser caches or the refresh selector becomes dishonest.
+    const res = await fetch('/data', { cache: 'no-store' });
     PCM.perf.fetchMs = performance.now() - t0;
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
@@ -2041,9 +2119,11 @@ async function fetchData() {
 /* ── Bootstrap ────────────────────────────────────────────────────── */
 async function loadBootstrap() {
   try {
+    // Bootstrap pulls both the first live sample and thresholds together so the
+    // first render already has real data plus alert configuration.
     const [dataRes, configRes] = await Promise.all([
-      fetch('/data'),
-      fetch('/api/config')
+      fetch('/data', { cache: 'no-store' }),
+      fetch('/api/config', { cache: 'no-store' })
     ]);
     const data = await dataRes.json();
     const config = await configRes.json();
@@ -2053,7 +2133,7 @@ async function loadBootstrap() {
     PCM.firstLoad = false;
     renderAll(data);
     updateDebugPanel(data);
-  } catch (e) {}
+  } catch (e) { console.log('Bootstrap error:', e); }
 }
 
 /* ── Process Actions ──────────────────────────────────────────────── */
@@ -2099,10 +2179,10 @@ async function resumeProcess(pid, name) {
 /* ── Config ───────────────────────────────────────────────────────── */
 async function fetchConfig() {
   try {
-    const res = await fetch('/api/config');
+    const res = await fetch('/api/config', { cache: 'no-store' });
     const data = await res.json();
     PCM.thresholds = { ...PCM.DEFAULT_THRESHOLDS, ...(data.thresholds || {}) };
-  } catch (e) {}
+  } catch (e) { console.log('Fetch config error:', e); }
 }
 
 async function saveConfig(cfg) {
@@ -2134,7 +2214,7 @@ async function saveThresholds(thresholds) {
 /* ── Snapshots ────────────────────────────────────────────────────── */
 async function fetchSnapshots() {
   try {
-    const res = await fetch('/api/snapshots');
+    const res = await fetch('/api/snapshots', { cache: 'no-store' });
     return await res.json();
   } catch (e) { return []; }
 }
@@ -2143,7 +2223,7 @@ async function deleteSnapshot(id) {
   try {
     await fetch('/api/snapshots/' + id + '/delete', { method: 'POST', headers: authHeaders() });
     renderSnapshots();
-  } catch (e) {}
+  } catch (e) { console.log('Delete snapshot error:', e); }
 }
 
 async function exportSnapshot(id, format) {
@@ -2162,7 +2242,7 @@ async function compareSnapshots(id) {
 
 async function fetchReport() {
   try {
-    const res = await fetch('/api/report');
+    const res = await fetch('/api/report', { cache: 'no-store' });
     return await res.text();
   } catch (e) { return '<p>Error loading report</p>'; }
 }
@@ -2183,11 +2263,11 @@ async function fetchReportDownload() {
 /* ── Errors ───────────────────────────────────────────────────────── */
 async function fetchErrors() {
   try {
-    const res = await fetch('/errors');
+    const res = await fetch('/errors', { cache: 'no-store' });
     const data = await res.json();
     PCM.errors = data.errors || [];
     updateDebugPanel(PCM.cachedData);
-  } catch (e) {}
+  } catch (e) { console.log('Fetch errors error:', e); }
 }
 
 /* ── Clipboard ───────────────────────────────────────────────────── */
@@ -2207,6 +2287,23 @@ function copyTableToClipboard(tableId) {
   navigator.clipboard.writeText(text).then(() => alert('Copied to clipboard!')).catch(() => alert('Failed to copy'));
 }
 
+/* ── Export ───────────────────────────────────────────────────────── */
+async function exportAllData() {
+  try {
+    const res = await fetch('/api/export', { cache: 'no-store' });
+    const data = await res.json();
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'pcmon_export_' + new Date().toISOString().slice(0,19).replace(/[T:]/g,'-') + '.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    return true;
+  } catch (e) { console.log('Export error:', e); return false; }
+}
+
 
 /* === MODULE: render ================================================ */
 
@@ -2223,7 +2320,7 @@ function renderDrives(container, disks) {
       '<div class="drive-head"><span class="drive-letter">' + esc(d.drive || '?') + '</span><span class="drive-pct ' + cls + '">' + fmtNum(pct) + '%</span></div>' +
       '<div class="drive-label">' + esc(d.label || '') + '</div>' +
       '<div class="drive-bar"><div class="drive-fill ' + cls + '" style="width:' + pct + '%"></div></div>' +
-      '<div class="drive-meta">' + fmtMem(d.free_gb * 1024) + ' free&nbsp;/&nbsp;' + fmtMem(d.total_gb * 1024) + ' total</div>';
+      '<div class="drive-meta">' + fmtMem((d.free_gb || 0) * 1024) + ' free&nbsp;/&nbsp;' + fmtMem((d.total_gb || 0) * 1024) + ' total</div>';
     container.appendChild(div);
   });
 }
@@ -2232,6 +2329,7 @@ function renderDrives(container, disks) {
 function renderGPUAdapters(container, gpu) {
   if (!container) return;
   container.innerHTML = '';
+  // Show a polished unsupported state instead of rendering misleading zeroes.
   if (!gpu || !gpu.available) { container.innerHTML = '<div class="note">No GPU data available</div>'; return; }
   (gpu.adapters || []).forEach(a => {
     const pct = a.pct || 0;
@@ -2240,6 +2338,7 @@ function renderGPUAdapters(container, gpu) {
     div.innerHTML =
       '<div class="gpu-name">' + esc(a.name || 'Unknown') + '</div>' +
       '<div class="gpu-stat">Status: <span style="color:var(--ok)">' + esc(a.status || 'OK') + '</span></div>' +
+      '<div class="gpu-stat">Telemetry: ' + esc(a.telemetry_supported ? 'Supported' : 'Unavailable') + '</div>' +
       '<div class="gpu-stat">Dedicated: ' + fmtMem((a.dedicated_gb || 0) * 1024) + '</div>' +
       '<div class="gpu-stat">Total: ' + fmtMem((a.total_gb || 0) * 1024) + '</div>' +
       '<div class="gpu-bar"><div class="gpu-fill" style="width:' + pct + '%"></div></div>';
@@ -2252,6 +2351,25 @@ function ioHtml(io) {
   return '<div class="io-card"><span class="io-lbl">' + esc(io.label) + '</span><span class="io-val">' + io.val + '</span></div>';
 }
 
+function issueSeverity(text) {
+  const t = (text || '').toLowerCase();
+  if (t.includes('critical') || t.includes('bottleneck') || t.includes('stale')) return 'bad';
+  if (t.includes('high') || t.includes('pressure') || t.includes('paging') || t.includes('unsupported') || t.includes('unavailable')) return 'warn';
+  return 'ok';
+}
+
+function summarizePrimaryIssue(data) {
+  const issues = data && Array.isArray(data.insights) ? data.insights : [];
+  const first = issues[0] || 'System healthy.';
+  if (/critical|less than 1gb|heavy paging|bottleneck/i.test(first)) {
+    return { title: first, desc: 'This is the highest-signal issue in the current sample and likely the first thing to investigate.' };
+  }
+  if (/unsupported|unavailable/i.test(first)) {
+    return { title: first, desc: 'This capability is not currently available, and pcmon is reporting that honestly.' };
+  }
+  return { title: first, desc: 'pcmon is ranking the most important issue from the current live sample here.' };
+}
+
 /* ── Table ────────────────────────────────────────────────────────── */
 function renderTable(tbl, rows, cols, opts = {}) {
   if (!tbl) return;
@@ -2262,6 +2380,16 @@ function renderTable(tbl, rows, cols, opts = {}) {
   if (opts.actions) { const th = document.createElement('th'); th.textContent = 'Actions'; hdr.appendChild(th); }
   const tbody = tbl.createTBody();
   const maxRows = opts.maxRows || 30;
+  // Empty tables should explain why they are empty instead of looking broken.
+  if (!rows || rows.length === 0) {
+    const tr = tbody.insertRow();
+    const td = tr.insertCell();
+    td.colSpan = cols.length + (opts.actions ? 1 : 0);
+    td.textContent = opts.emptyText || 'No data available.';
+    td.className = 'note';
+    td.style.padding = '14px';
+    return;
+  }
   rows.slice(0, maxRows).forEach((r, rowIdx) => {
     const tr = tbody.insertRow();
     cols.forEach((_, i) => { const td = tr.insertCell(); td.textContent = r[i] !== undefined ? r[i] : ''; });
@@ -2357,11 +2485,11 @@ function renderAll(d) {
 
   /* RAM page */
   TXT(EL('r-sv-ram'), fmtNum(d.ram_pct) + '%');
-  TXT(EL('r-avail'), fmtMem(d.ram_avail_mb) + ' / ' + fmtMem(d.ram_total_gb * 1024));
+  TXT(EL('r-avail'), fmtMem(d.ram_avail_mb) + ' / ' + fmtMem((d.ram_total_gb || 0) * 1024));
   COL(EL('r-sf-ram'), d.ram_pct || 0);
   FILL(EL('r-sf-fill-ram'), d.ram_pct || 0);
   TXT(EL('r-sv-cm'), fmtNum(d.commit_pct) + '%');
-  TXT(EL('r-ss-cm'), fmtMem(d.commit_gb * 1024) + ' / ' + fmtMem(d.limit_gb * 1024));
+  TXT(EL('r-ss-cm'), fmtMem((d.commit_gb || 0) * 1024) + ' / ' + fmtMem((d.limit_gb || 0) * 1024));
   COL(EL('r-sf-cm'), d.commit_pct || 0);
   FILL(EL('r-sf-fill-cm'), d.commit_pct || 0);
   TXT(EL('r-sv-pg'), fmtNum(d.pages_sec || 0) + '/s');
@@ -2379,6 +2507,13 @@ function renderAll(d) {
   FILL(EL('c-sf-fill-cpu'), d.cpu_pct || 0);
   TXT(EL('c-sv-pg'), fmtNum(d.pages_sec || 0) + '/s');
   TXT(EL('c-queue'), fmtNum(d.disk_queue || 0));
+  const cpu = d.cpu || {};
+  TXT(EL('cpu-name'), cpu.name || 'Unknown CPU');
+  TXT(EL('cpu-topology'), ((cpu.sockets || 0) || '—') + ' / ' + ((cpu.cores || 0) || '—') + ' / ' + ((cpu.logical || 0) || '—'));
+  TXT(EL('cpu-clocks'), (cpu.base_mhz ? fmtNum(cpu.base_mhz) + ' MHz' : '—') + ' / ' + (cpu.current_mhz ? fmtNum(cpu.current_mhz) + ' MHz' : '—') + (cpu.performance_pct ? ' (' + fmtNum(cpu.performance_pct) + '% perf)' : ''));
+  TXT(EL('cpu-max-clock'), cpu.max_seen_mhz ? fmtNum(cpu.max_seen_mhz) + ' MHz' : '—');
+  TXT(EL('cpu-temp'), cpu.temp_supported && cpu.temp_c != null ? fmtNum(cpu.temp_c) + ' C' : '—');
+  TXT(EL('cpu-power'), cpu.power_supported && cpu.power_w != null ? fmtNum(cpu.power_w) + ' W' : '—');
   hideSkeleton('c-tbl-sk', 'c-tbl');
 
   /* Disks */
@@ -2409,14 +2544,20 @@ function renderAll(d) {
   /* GPU */
   const gpu = d.gpu || {};
   TXT(EL('g-avail'), gpu.available ? 'Yes' : 'No');
+  TXT(EL('g-status'), gpu.status_text || (gpu.available ? 'Collector active' : 'Unsupported / unavailable on this device'));
   const gpuSection = EL('pg-gpu');
   if (gpuSection) {
-    if (gpu && gpu.available) {
+    if (gpu && gpu.available && gpu.engines_supported) {
       const eng = gpu.eng_type_totals || {};
       TXT(EL('g-3d'), eng['3d'] !== undefined ? fmtNum(eng['3d']) + '%' : 'N/A');
       TXT(EL('g-vdec'), eng['videodecode'] !== undefined ? fmtNum(eng['videodecode']) + '%' : 'N/A');
       TXT(EL('g-venc'), eng['videoencode'] !== undefined ? fmtNum(eng['videoencode']) + '%' : 'N/A');
       TXT(EL('g-copy'), eng['copy'] !== undefined ? fmtNum(eng['copy']) + '%' : 'N/A');
+    } else {
+      TXT(EL('g-3d'), 'N/A');
+      TXT(EL('g-vdec'), 'N/A');
+      TXT(EL('g-venc'), 'N/A');
+      TXT(EL('g-copy'), 'N/A');
     }
   }
   renderGPUAdapters(EL('gpu-adapters'), gpu);
@@ -2449,12 +2590,15 @@ function renderAll(d) {
   /* System */
   const sysSummary = EL('sys-summary');
   if (sysSummary) {
+    const network = d.network || {};
     sysSummary.innerHTML = [
       ['Hostname', esc(d.hostname) || '—'],
       ['OS', esc(d.os_caption) || '—'],
       ['Total Processes', d.total_procs || 0],
-      ['RAM Total', fmtMem(d.ram_total_gb * 1024)],
-      ['Commit Limit', fmtMem(d.limit_gb * 1024)]
+      ['RAM Total', fmtMem((d.ram_total_gb || 0) * 1024)],
+      ['Commit Limit', fmtMem((d.limit_gb || 0) * 1024)],
+      ['Network', esc(network.status_text || 'Unknown')],
+      ['Primary Adapter', esc(network.busiest_adapter || '—')]
     ].map(([k, v]) => '<div class="sys-row"><span>' + k + '</span><span>' + v + '</span></div>').join('');
     hideSkeleton('sys-summary-sk', 'sys-summary');
   }
@@ -2478,23 +2622,29 @@ function renderAll(d) {
     hideSkeleton('sus-tbl-sk', 'sus-tbl');
 
     const svcData = (d.heavy_services || []).slice(0, 25);
-    renderTable(EL('svc-tbl'), svcData.map(s => [s.display_name || s.name || '?', s.name || '?', s.state || '?', s.start_mode || '?', s.pid || 0, fmtMem((d.top_ram || []).find(p => p.pid == s.pid)?.ws_mb || 0)]), ['Display Name', 'Name', 'State', 'Start', 'PID', 'WS'], {});
+    renderTable(EL('svc-tbl'), svcData.map(s => [s.display_name || s.name || '?', s.name || '?', s.state || '?', s.start_mode || '?', s.pid || 0, fmtMem((d.top_ram || []).find(p => p.pid == s.pid)?.ws_mb || 0)]), ['Display Name', 'Name', 'State', 'Start', 'PID', 'WS'], { emptyText: 'No matching heavy services in the current sample.' });
     hideSkeleton('svc-tbl-sk', 'svc-tbl');
 
     /* System page */
     renderDrives(EL('disk-drives'), d.disks);
 
     const startupData = (d.startup || []).slice(0, 20);
-    renderTable(EL('startup-tbl'), startupData.map(s => [s.name || '?', s.command || '?', s.location || '?']), ['Name', 'Command', 'Location'], {});
+    renderTable(EL('startup-tbl'), startupData.map(s => [s.name || '?', s.command || '?', s.location || '?']), ['Name', 'Command', 'Location'], { emptyText: 'No startup items were returned by Windows.' });
     hideSkeleton('startup-tbl-sk', 'startup-tbl');
 
     const pfData = (d.pagefile || []).slice(0, 5);
-    renderTable(EL('pagefile-tbl'), pfData.map(p => [p.name || '?', fmtMem(p.allocated_mb), fmtMem(p.current_usage_mb), fmtMem(p.peak_usage_mb)]), ['Name', 'Allocated MB', 'Current MB', 'Peak MB'], {});
+    renderTable(EL('pagefile-tbl'), pfData.map(p => [p.name || '?', fmtMem(p.allocated_mb), fmtMem(p.current_usage_mb), fmtMem(p.peak_usage_mb)]), ['Name', 'Allocated MB', 'Current MB', 'Peak MB'], { emptyText: 'No page file data was returned.' });
     hideSkeleton('pagefile-tbl-sk', 'pagefile-tbl');
 
     const profiles = (d.ps_profiles || []);
-    renderTable(EL('profiles-tbl'), profiles.map(p => [p.path || '?', p.size_kb ? fmtMem(p.size_kb) : '?']), ['Profile Path', 'Size'], {});
+    renderTable(EL('profiles-tbl'), profiles.map(p => [p.path || '?', p.size_kb ? fmtMem(p.size_kb) : (p.exists ? '0 KB' : 'Missing')]), ['Profile Path', 'Size'], { emptyText: 'No PowerShell profile paths were discovered.' });
     hideSkeleton('profiles-tbl-sk', 'profiles-tbl');
+
+    const networkAdapters = ((d.network && d.network.adapters) || []).slice(0, 12);
+    // This table is inventory/state, so it updates with the throttled table cadence
+    // instead of every fast metric tick.
+    renderTable(EL('net-tbl'), networkAdapters.map(n => [n.name || '?', n.kind || '?', n.status || '?', n.link_speed || '—', n.media_type || '—']), ['Name', 'Type', 'Status', 'Link', 'Media'], { emptyText: 'No physical network adapters were detected.' });
+    hideSkeleton('net-tbl-sk', 'net-tbl');
 
     /* All Processes */
     const allProcs = (d.all_processes || []).slice(0, 100);
@@ -2504,9 +2654,12 @@ function renderAll(d) {
     /* Insights */
     const insEl = EL('insights-list');
     if (insEl) {
-      insEl.innerHTML = (d.insights || []).map(t => '<div class="insight">' + esc(t) + '</div>').join('');
+      insEl.innerHTML = (d.insights || []).map(t => '<div class="insight ' + issueSeverity(t) + '">' + esc(t) + '</div>').join('');
       if (!d.insights || d.insights.length === 0) insEl.innerHTML = '<div class="note" style="padding:6px 0">No insights yet.</div>';
     }
+    const primaryIssue = summarizePrimaryIssue(d);
+    TXT(EL('issue-primary-title'), primaryIssue.title);
+    TXT(EL('issue-primary-desc'), primaryIssue.desc);
   }
 
   /* Error banner */
@@ -2619,7 +2772,7 @@ function updateDebugPanel(data) {
   }
   if (dbgPsErrs) {
     const psErrBanner = EL('ps-errors');
-    if (psErrBanner && psErrBanner.textContent) dbgPsErrs.innerHTML = psErrBanner.textContent;
+    if (psErrBanner && psErrBanner.textContent) dbgPsErrs.innerHTML = esc(psErrBanner.textContent);
   }
 }
 
@@ -2674,13 +2827,21 @@ function initRefreshSelector() {
 
   const updateRefresh = (rate) => {
     PCM.refreshInterval = rate;
+    if (sel) sel.value = String(rate);
+    if (settingsSel) settingsSel.value = String(rate);
     try {
       fetch('/api/refresh-rate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshRate: rate })
-      }).catch(() => {});
-    } catch (e) {}
+      }).catch(e => console.log('Refresh rate save error:', e));
+    } catch (e) { console.log('Refresh rate save error:', e); }
+    if (PCM.connectionMethod === 'http') {
+      clearTimeout(PCM.pollTimer);
+      PCM.pollTimer = null;
+      PCM.pollInFlight = false;
+      fetchData();
+    }
     updateSettingsConnInfo();
   };
 
@@ -2763,17 +2924,23 @@ const THRESHOLD_DEFS = [
   { key: 'ram_pct', label: 'RAM Usage %', min: 0, max: 100 },
   { key: 'cpu_pct', label: 'CPU Usage %', min: 0, max: 100 },
   { key: 'commit_pct', label: 'Commit Charge %', min: 0, max: 100 },
-  { key: 'pages_sec', label: 'Pages/sec', min: 0, max: 10000 },
+  { key: 'pages_sec', label: 'Pages/sec', min: 0, max: 50000 },
   { key: 'non_paged_mb', label: 'Non-Paged Pool MB', min: 0, max: 10000 },
-  { key: 'disk_pct', label: 'Disk Usage %', min: 0, max: 100 }
+  { key: 'disk_pct', label: 'Disk Usage %', min: 0, max: 100 },
+  { key: 'gpu_pct', label: 'GPU Usage %', min: 0, max: 100 },
+  { key: 'net_sent_kb', label: 'Network Sent KB/s', min: 0, max: 100000 },
+  { key: 'net_recv_kb', label: 'Network Recv KB/s', min: 0, max: 100000 }
 ];
 
 function renderThresholds() {
   const container = EL('thresholds-form');
+  const skeleton = EL('thresholds-form-sk');
   if (!container) return;
   container.innerHTML = THRESHOLD_DEFS.map(t =>
     '<div class="threshold-row"><label>' + esc(t.label) + '</label><input type="number" data-key="' + t.key + '" value="' + (PCM.thresholds[t.key] || 0) + '" min="' + t.min + '" max="' + t.max + '"></div>'
   ).join('');
+  if (skeleton) skeleton.style.display = 'none';
+  if (container) container.style.display = 'block';
 }
 
 async function saveThresholdsFromForm() {
@@ -2794,6 +2961,24 @@ async function saveThresholdsFromForm() {
 }
 
 function initThresholds() { renderThresholds(); const saveBtn = EL('btn-save-thresholds'); if (saveBtn) saveBtn.addEventListener('click', saveThresholdsFromForm); }
+
+/* ── Export ───────────────────────────────────────────────────────── */
+function initExportButton() {
+  const exportBtn = EL('btn-export-data');
+  const exportMsg = EL('export-msg');
+  if (exportBtn) exportBtn.addEventListener('click', async () => {
+    exportBtn.disabled = true;
+    exportBtn.textContent = 'Exporting...';
+    const ok = await exportAllData();
+    if (exportMsg) {
+      exportMsg.textContent = ok ? 'Exported!' : 'Error';
+      exportMsg.style.color = ok ? 'var(--ok)' : 'var(--bad)';
+      setTimeout(() => { if (exportMsg) exportMsg.textContent = ''; }, 2000);
+    }
+    exportBtn.disabled = false;
+    exportBtn.textContent = 'Export All Data (JSON)';
+  });
+}
 
 /* ── Report ──────────────────────────────────────────────────────── */
 function initReportButtons() {
@@ -2856,6 +3041,7 @@ async function start() {
   initSnapshots();
   initThresholds();
   initReportButtons();
+  initExportButton();
   initStream();
 }
 

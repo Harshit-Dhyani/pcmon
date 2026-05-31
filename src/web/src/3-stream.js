@@ -30,7 +30,7 @@ function tryWebSocket() {
           updateDebugPanel(data);
           updateSettingsConnInfo();
         }
-      } catch (e) {}
+      } catch (e) { /* malformed stream messages are ignored and the next tick will recover */ }
     };
     PCM.wsSocket.onerror = () => { PCM.connectionMethod = 'sse'; trySSE(); };
     PCM.wsSocket.onclose = () => {
@@ -68,7 +68,7 @@ function trySSE() {
           updateDebugPanel(data);
           updateSettingsConnInfo();
         }
-      } catch (e) {}
+      } catch (e) { /* malformed SSE messages are ignored and the next tick will recover */ }
     };
     PCM.eventSource.onerror = () => {
       PCM.connectionMethod = 'http';

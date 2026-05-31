@@ -3,7 +3,6 @@
 /* ── Auth ─────────────────────────────────────────────────────────── */
 function authHeaders(extra = {}) {
   const h = { 'Content-Type': 'application/json' };
-  if (PCM.csrfToken) h['X-PCMON-Token'] = PCM.csrfToken;
   Object.assign(h, extra);
   return h;
 }
@@ -20,7 +19,8 @@ async function fetchData() {
   if (PCM.connectionMethod === 'http') PCM.pollInFlight = true;
   const t0 = performance.now();
   try {
-    const res = await fetch('/data');
+    // Live data must bypass browser caches or the refresh selector becomes dishonest.
+    const res = await fetch('/data', { cache: 'no-store' });
     PCM.perf.fetchMs = performance.now() - t0;
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
@@ -46,9 +46,11 @@ async function fetchData() {
 /* ── Bootstrap ────────────────────────────────────────────────────── */
 async function loadBootstrap() {
   try {
+    // Bootstrap pulls both the first live sample and thresholds together so the
+    // first render already has real data plus alert configuration.
     const [dataRes, configRes] = await Promise.all([
-      fetch('/data'),
-      fetch('/api/config')
+      fetch('/data', { cache: 'no-store' }),
+      fetch('/api/config', { cache: 'no-store' })
     ]);
     const data = await dataRes.json();
     const config = await configRes.json();
@@ -58,7 +60,7 @@ async function loadBootstrap() {
     PCM.firstLoad = false;
     renderAll(data);
     updateDebugPanel(data);
-  } catch (e) {}
+  } catch (e) { /* keep bootstrap failures silent; the UI will retry on the next tick */ }
 }
 
 /* ── Process Actions ──────────────────────────────────────────────── */
@@ -104,10 +106,10 @@ async function resumeProcess(pid, name) {
 /* ── Config ───────────────────────────────────────────────────────── */
 async function fetchConfig() {
   try {
-    const res = await fetch('/api/config');
+    const res = await fetch('/api/config', { cache: 'no-store' });
     const data = await res.json();
     PCM.thresholds = { ...PCM.DEFAULT_THRESHOLDS, ...(data.thresholds || {}) };
-  } catch (e) {}
+  } catch (e) { /* config fetch is best-effort during startup */ }
 }
 
 async function saveConfig(cfg) {
@@ -139,7 +141,7 @@ async function saveThresholds(thresholds) {
 /* ── Snapshots ────────────────────────────────────────────────────── */
 async function fetchSnapshots() {
   try {
-    const res = await fetch('/api/snapshots');
+    const res = await fetch('/api/snapshots', { cache: 'no-store' });
     return await res.json();
   } catch (e) { return []; }
 }
@@ -148,7 +150,7 @@ async function deleteSnapshot(id) {
   try {
     await fetch('/api/snapshots/' + id + '/delete', { method: 'POST', headers: authHeaders() });
     renderSnapshots();
-  } catch (e) {}
+  } catch (e) { /* snapshot deletion failures are handled by the UI action state */ }
 }
 
 async function exportSnapshot(id, format) {
@@ -167,7 +169,7 @@ async function compareSnapshots(id) {
 
 async function fetchReport() {
   try {
-    const res = await fetch('/api/report');
+    const res = await fetch('/api/report', { cache: 'no-store' });
     return await res.text();
   } catch (e) { return '<p>Error loading report</p>'; }
 }
@@ -188,11 +190,11 @@ async function fetchReportDownload() {
 /* ── Errors ───────────────────────────────────────────────────────── */
 async function fetchErrors() {
   try {
-    const res = await fetch('/errors');
+    const res = await fetch('/errors', { cache: 'no-store' });
     const data = await res.json();
     PCM.errors = data.errors || [];
     updateDebugPanel(PCM.cachedData);
-  } catch (e) {}
+  } catch (e) { /* error polling stays best-effort */ }
 }
 
 /* ── Clipboard ───────────────────────────────────────────────────── */
@@ -210,4 +212,21 @@ function copyTableToClipboard(tableId) {
     text += '\n';
   });
   navigator.clipboard.writeText(text).then(() => alert('Copied to clipboard!')).catch(() => alert('Failed to copy'));
+}
+
+/* ── Export ───────────────────────────────────────────────────────── */
+async function exportAllData() {
+  try {
+    const res = await fetch('/api/export', { cache: 'no-store' });
+    const data = await res.json();
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'pcmon_export_' + new Date().toISOString().slice(0,19).replace(/[T:]/g,'-') + '.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    return true;
+  } catch (e) { return false; }
 }
