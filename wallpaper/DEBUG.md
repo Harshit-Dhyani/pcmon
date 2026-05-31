@@ -27,12 +27,12 @@ Invoke-RestMethod http://localhost:9876/debug | ConvertTo-Json
 
 Errors are also saved to:
 ```
-$env:TEMP\pcmon_errors.log
+$env:TEMP\pcmon_errors_<port>.log
 ```
 
 View it with:
 ```powershell
-Get-Content $env:TEMP\pcmon_errors.log
+Get-Content (Join-Path $env:TEMP "pcmon_errors_9876.log")
 ```
 
 ## Frontend Debugging (Wallpaper/Dashboard)
@@ -65,10 +65,20 @@ Object.keys(window.pcmonDebug)
 # Test API directly
 Invoke-RestMethod http://localhost:9876/data | ConvertTo-Json -Depth 5
 
+# Confirm whether the backend is still warming or degraded
+$d = Invoke-RestMethod http://localhost:9876/data
+$d.collection_state
+$d.subsystems
+
 # Check if counters exist
 Get-Counter -ListSet *Memory* | Select-Object CounterSetName
 Get-Counter -ListSet *Processor* | Select-Object CounterSetName
 ```
+
+Notes:
+- During startup, `/data` can return a warming payload while the first full collector sample is being prepared.
+- The dashboard should keep skeletons visible for sections whose subsystem is still warming, transiently unavailable, or errored.
+- Once a subsystem is settled, empty sections should show an honest empty/unsupported state rather than a permanent skeleton.
 
 ### 3. GPU not detected
 **Check:**
@@ -94,6 +104,8 @@ netsh advfirewall firewall add rule --help
 .\pcmon.ps1 -Port 8080
 ```
 
+If the script cannot reserve a listener, pcmon should exit with a clear message instead of claiming that the dashboard is live.
+
 ### 5. Wallpaper not displaying
 - Make sure pcmon is running first
 - Use Edge/Chrome for best compatibility
@@ -101,10 +113,9 @@ netsh advfirewall firewall add rule --help
 
 ## Enable Verbose Logging
 
-Edit pcmon.ps1 and add:
+Run with debug mode:
 ```powershell
-$VerbosePreference = "Continue"
-$DebugPreference = "Continue"
+.\pcmon.ps1 -Debug
 ```
 
 ## Performance Issues
@@ -114,8 +125,14 @@ Check refresh rate:
 # In browser console
 console.log(window.pcmonDebug.config.refreshRate)
 
-// Slow? Increase interval in config
+// Slow? Increase interval in Settings.
 ```
+
+Current refresh limits:
+- Minimum: 500ms
+- Maximum: 10000ms
+- Fast cards update at the selected cadence when stream/polling is healthy
+- Tables and static sections intentionally update less often and should not rerender on every fast packet
 
 ## Report Issues
 

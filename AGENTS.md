@@ -181,8 +181,8 @@
   - WebSocket via `AcceptWebSocketAsync` (try first)
   - SSE as fallback with text/event-stream
   - HTTP polling as last resort
-  - Fast metrics timer (50ms) broadcasts lightweight data (RAM, CPU, commit, disk)
-  - WebSocket broadcast timer sends full data every ~50ms
+  - Fast metrics timer broadcasts lightweight data (RAM, CPU, commit, disk) at the configured cadence, default 500ms
+  - WebSocket broadcast timer sends full cached payloads every ~500ms when clients are connected
   - Fast packets are summary-only and must never overwrite tables, groups, startup items, services, or process inventories
   - Full payloads must include stable `top_ram`, `top_private`, `top_cpu`, `all_processes`, `startup`, `heavy_services`, `groups`, `disks`, and `pagefile` fields
   - Frontend renderers must preserve prior full-data sections when processing `_fast` packets
@@ -214,7 +214,7 @@
   - Overview/API responses must surface stale or degraded collection state when relevant
 
   ### Refresh Rate System
-  - UI sends refresh rate to `/api/refresh-rate` (min 1000ms)
+  - UI sends refresh rate to `/api/refresh-rate` (min 500ms, max 10000ms)
   - Backend saves to temp file
   - Background process reads rate file each cycle
   - Sync fallback respects same minimum
@@ -261,6 +261,7 @@
   - `_fast` handlers may update only summary cards, trends, timestamps, and sparkline history
   - Table renderers must not replace populated tables with empty placeholders unless the backend explicitly reports an empty full payload
   - SSE/WS fast updates must not zero out group counts or process counts just because those fields are absent
+  - Skeletons must remain visible per section until that section's owning subsystem has settled; do not hide all skeletons just because the first partial payload arrived
   - Empty-state UI must distinguish: loading, empty, unsupported, error, stale
   - Drive cards, adapter cards, and key tables must use stable identity and sane retention to avoid flicker
   - Overview must surface "what is wrong right now?" clearly and honestly
@@ -380,11 +381,14 @@
   - [x] Empty catch blocks in stream/API/render
   - [x] Drive list flicker - use stable data-drive attribute
   - [x] XSS in error messages - escape with esc()
+  - [x] Skeleton unload timing - keep section skeletons until the owning subsystem settles
+  - [x] Fast packet merge - `_fast` updates do not replace full payload state
+  - [x] Snapshot inline handlers - use data attributes and event listeners for dynamic snapshot IDs
 
   ### Build System Issues (Fixed)
   - [x] BOM handling - fix UTF-8 BOM removal
   - [x] main.ps1 in build - remove from concatenation
-  - [x] Output path mismatch - dist not web/dist
+  - [x] Output path mismatch - generated dashboard output is `dist/index.html`
   - [x] $1 regex backreference fix
 
 ### API Issues (Fixed)
