@@ -1,11 +1,24 @@
 # pcmon
 
-> **⚠️ Warning: This project is still in active development.**  
-> There may be bugs, incomplete features, and breaking changes.
+Local-first Windows diagnostics in one PowerShell script and a lightweight browser dashboard.
 
-Local-first Windows system monitoring and diagnostics tool.
+pcmon helps you understand what is consuming CPU, memory, disk, GPU, network, services, startup items, and process groups on a Windows machine. It is built for truthful diagnostics: unsupported, stale, warming, or missing collectors are surfaced clearly instead of being hidden behind fake zeroes.
+
+> Status: active development. Public interfaces are intended to remain compatible, but internals and diagnostics may continue to evolve.
+
+## Highlights
+
+- **Local-first by design**: no cloud service, telemetry, account, or external runtime.
+- **PowerShell-native collection**: uses Windows and PowerShell APIs directly.
+- **Plain web dashboard**: HTML, CSS, and JavaScript only; no React, Vue, Angular, Electron, or Tauri.
+- **Stable live data**: fast metric packets update cards and trends without wiping full process tables or static sections.
+- **Truthful collector state**: `/data` includes `collection_state`, `cache_age_ms`, and per-subsystem states.
+- **Safe process actions**: kill, suspend, and resume require explicit confirmation and block protected system processes.
+- **Snapshots and reports**: save, compare, export, and print system state locally.
 
 ## Quick Start
+
+Run from the repository root:
 
 ```powershell
 .\pcmon.ps1
@@ -17,189 +30,202 @@ Or with PowerShell Core:
 pwsh -File .\pcmon.ps1
 ```
 
+Then open the printed local URL, usually:
+
+```text
+http://localhost:9876/
+```
+
+## Requirements
+
+- Windows
+- Windows PowerShell 5.1+ or PowerShell 7+
+- A modern browser
+- Optional administrator rights for the most complete process and counter visibility
+
 ## Usage
 
 ```powershell
-.\pcmon.ps1              # defaults: opens browser, 500ms fast refresh
-.\pcmon.ps1 -NoOpen      # API-only mode, no browser auto-open
-.\pcmon.ps1 -ApiOnly     # same as -NoOpen
-.\pcmon.ps1 -Debug       # enable verbose debug logging
-.\pcmon.ps1 -Port 8080   # use a specific local port
-.\pcmon.ps1 -Tray        # system tray mode (runs in background)
-.\pcmon.ps1 -Wallpaper   # live wallpaper mode
-.\pcmon.ps1 -Help        # show all options
+.\pcmon.ps1              # Start server and open the dashboard
+.\pcmon.ps1 -NoOpen      # Start API/dashboard server without opening a browser
+.\pcmon.ps1 -ApiOnly     # Alias-style API-only mode
+.\pcmon.ps1 -Debug       # Enable verbose runtime logging
+.\pcmon.ps1 -Port 8080   # Use a specific local port
+.\pcmon.ps1 -Tray        # Run with tray integration when supported
+.\pcmon.ps1 -Wallpaper   # Serve the live wallpaper view
+.\pcmon.ps1 -Help        # Show all options
 ```
 
-## Features
+## Dashboard
 
-### Dashboard Tabs
-- **Overview** — RAM, commit, CPU, disk at a glance with sparklines
-- **RAM** — paged/non-paged pool, private memory breakdown
-- **CPU** — CPU utilization, queue, paging activity
-- **Disk** — disk activity, drives with usage bars
-- **GPU** — adapter info, utilization, memory (if available)
-- **Groups** — Browser/Electron, Dev Tools, Security tools memory
-- **Suspicious** — high-resource processes detection
-- **Services** — heavy services and startup items
-- **System** — drives, page file, PowerShell profiles
-- **All Processes** — full process list with filtering
-- **Settings** — configurable alert thresholds and connection settings
+pcmon includes 11 diagnostic views:
 
-### Real-Time Updates
-- **WebSocket** — fastest, persistent two-way connection
-- **SSE** — Server-Sent Events, real-time push
-- **HTTP Polling** — fallback with configurable refresh rate
-- **Fast Metrics** — summary-only ~500ms updates for key cards, trends, timestamps, and sparklines
-- **Stable Tables** — process, drive, service, group, startup, network, and static sections keep their last full payload until a fresh full payload arrives
+| Tab | Focus |
+| --- | --- |
+| Overview | RAM, commit, CPU, disk, current issues, and sparklines |
+| RAM | Availability, commit pressure, private memory, paged/non-paged pool |
+| CPU | Utilization, paging activity, queue signals, CPU identity |
+| Disk | Activity, queue, read/write throughput, drive usage |
+| GPU | Adapter identity, engine utilization, VRAM where Windows exposes it |
+| Groups | Browser/Electron, developer tools, and security tool memory groups |
+| Suspicious | High-resource or unusual process candidates |
+| Services | Heavy services and startup items |
+| System | Drives, pagefile, PowerShell profiles, network adapters |
+| All Processes | Full process inventory with filtering and actions |
+| Settings | Thresholds, refresh cadence, connection/debug information |
 
-### Process Actions
-- **Kill** — terminate a process (with confirmation)
-- **Suspend** — pause a process
-- **Resume** — resume a suspended process
+## Data Freshness Model
 
-Process actions require `X-PCMON-Confirm: 1`, and protected system processes cannot be killed, suspended, or resumed through pcmon.
+pcmon intentionally separates fast metrics from heavier inventory data.
 
-### Snapshots
-- Save labeled snapshots of system state
-- Compare snapshots to see what changed
-- Export to JSON or CSV
+- Fast metrics run at the configured cadence, default `500ms`.
+- Tables and static sections refresh more slowly to avoid constant full rerenders.
+- `_fast` stream packets update only summary cards, timestamps, trends, and sparklines.
+- Full payloads preserve `top_ram`, `top_private`, `top_cpu`, `all_processes`, `startup`, `heavy_services`, `groups`, `disks`, `pagefile`, GPU adapters, and network adapters until a fresh full replacement is available.
+- Section skeletons remain visible until that section's owning subsystem has settled.
 
-### Reports
-- Generate printable HTML reports
-- Save as PDF via browser print dialog
+The refresh selector supports `500ms` through `10000ms`.
 
-### Insights
-Real-time diagnostic insights:
-- High RAM vs commit pressure distinction
-- Paging / disk thrashing detection
-- Non-paged pool (driver leak detection)
-- Browser/Electron/Dev tool overhead
-- Disk bottlenecks
-- Collector state clarity for stale, missing, unsupported, warming, and transiently unavailable subsystems
+## Collector State
 
-### Alert Thresholds
-Customizable thresholds for:
-- RAM usage %
-- CPU usage %
-- Commit charge %
-- Pages/sec
-- Non-paged pool MB
-- Disk usage %
+The `/data` payload includes non-breaking metadata for diagnostics and UI honesty:
 
-## API Routes
+```json
+{
+  "collection_state": "valid",
+  "cache_age_ms": 120,
+  "subsystems": {
+    "counters": "valid",
+    "processes": "valid",
+    "gpu": "unsupported",
+    "network": "valid",
+    "static": "valid"
+  }
+}
+```
+
+Subsystem states may include `valid`, `unsupported`, `missing`, `stale`, `warming`, `transiently_unavailable`, or `error`.
+
+## API Reference
+
+All endpoints are local to the running pcmon instance.
 
 | Route | Method | Description |
-|-------|--------|-------------|
+| --- | --- | --- |
 | `/` | GET | Dashboard HTML |
+| `/health` | GET | Cheap server health check |
 | `/data` | GET | Live system data JSON |
-| `/dashboard.css` | GET | Styles |
-| `/stream` | GET | WebSocket or SSE real-time stream |
-| `/api/process/{pid}/kill` | POST | Kill process |
-| `/api/process/{pid}/suspend` | POST | Suspend process |
-| `/api/process/{pid}/resume` | POST | Resume process |
-| `/api/snapshots` | GET | List snapshots |
-| `/api/snapshots` | POST | Save snapshot |
-| `/api/snapshots/{id}/compare` | POST | Compare snapshot |
-| `/api/snapshots/{id}/export` | GET | Export JSON |
-| `/api/snapshots/{id}/export.csv` | GET | Export CSV |
-| `/api/snapshots/{id}` | DELETE | Delete snapshot |
-| `/api/config` | GET/POST | Alert thresholds |
-| `/api/refresh-rate` | POST | Set refresh rate (ms) |
+| `/stream` | GET | WebSocket or SSE live stream |
 | `/api/export` | GET | Export current live data as JSON |
-| `/api/report` | GET | Printable report |
-| `/api/report/download` | GET | Download report |
-| `/health` | GET | Server health status |
-| `/errors` | GET | Error log |
-| `/debug` | GET | Debug info |
-| `/logs` | GET | Plain text logs |
-| `/wallpaper.html` | GET | Live wallpaper |
+| `/api/report` | GET | Printable HTML report |
+| `/api/report/download` | GET | Download report HTML |
+| `/api/config` | GET/POST | Read or save alert thresholds |
+| `/api/refresh-rate` | POST | Save refresh rate in milliseconds |
+| `/api/process/{pid}/kill` | POST | Kill process, requires confirmation header |
+| `/api/process/{pid}/suspend` | POST | Suspend process, requires confirmation header |
+| `/api/process/{pid}/resume` | POST | Resume process, requires confirmation header |
+| `/api/snapshots` | GET | List saved snapshots |
+| `/api/snapshots` | POST | Save a snapshot |
+| `/api/snapshots/{id}/compare` | POST | Compare current data to a snapshot |
+| `/api/snapshots/{id}/export` | GET | Export snapshot JSON |
+| `/api/snapshots/{id}/export.csv` | GET | Export snapshot CSV |
+| `/api/snapshots/{id}` | DELETE | Delete snapshot |
+| `/errors` | GET | Recent runtime errors |
+| `/debug` | GET | Debug state |
+| `/logs` | GET | Plain text runtime logs |
+| `/wallpaper.html` | GET | Live wallpaper page |
 
-## File Layout
+Process action endpoints require:
 
-```
-pcmon/
-├── pcmon.ps1           # built executable — run this
-├── dist/
-│   └── index.html      # built dashboard (CSS+JS inlined)
-├── src/
-│   ├── build.ps1       # build script — run this to rebuild
-│   ├── backend/        # PowerShell source modules
-│   │   ├── 00-config.ps1
-│   │   ├── 01-logging.ps1
-│   │   ├── 02-http-helpers.ps1
-│   │   ├── 03-actions.ps1
-│   │   ├── 04-snapshots.ps1
-│   │   ├── 05-collectors.ps1
-│   │   ├── 06-background.ps1
-│   │   ├── 07-server.ps1
-│   │   └── main.ps1
-│   └── web/           # frontend source
-│       ├── index.html     # HTML template
-│       ├── dashboard.css  # styles
-│       └── src/           # JS source modules
-│           ├── 1-config.js
-│           ├── 2-utils.js
-│           ├── 3-stream.js
-│           ├── 4-api.js
-│           └── 5-render.js
-├── wallpaper/          # live wallpaper HTML
-├── snapshots/          # saved snapshots (created on first use)
-└── config.json         # saved alert thresholds (created on first use)
+```text
+X-PCMON-Confirm: 1
 ```
 
 ## Architecture
 
-### Source & Build
-- Source code lives in `src/`
-- Run `.\src\build.ps1` to build `pcmon.ps1` and `dist/index.html`
-- `pcmon.ps1` and `dist/index.html` are generated build outputs and are committed
-- Edit `src/backend/*` and `src/web/*` first, then rebuild; do not hand-edit generated output as source of truth
-- The build inlines `src/web/dashboard.css` and `src/web/src/*.js` into `dist/index.html`
+```text
+pcmon/
+├── pcmon.ps1              # Generated runnable script
+├── dist/
+│   └── index.html         # Generated dashboard with CSS and JS inlined
+├── src/
+│   ├── build.ps1          # Build script
+│   ├── backend/           # PowerShell source modules
+│   └── web/               # Dashboard source
+├── wallpaper/             # Live wallpaper assets and notes
+├── snapshots/             # Local snapshots, created on use
+└── config.json            # Local threshold config, created on use
+```
 
-### Background Data Collection
-- Separate PowerShell process collects data continuously
-- Writes to a port-scoped temp JSON cache file every configured refresh cycle
-- Main server reads from cache for fast response
-- `/health` stays cheap and does not wait for collector warmup
-- `/data` returns a warming payload while first data is loading, uses last good cache when available, and only falls back to synchronous collection after warmup has had time to publish
-- Full payloads include `collection_state`, `cache_age_ms`, `subsystems`, and optional `errors_recent`
+Source of truth:
 
-### Real-Time Stream (`/stream`)
-- **WebSocket** — Try first via `AcceptWebSocketAsync`. Broadcasts full cached payloads every ~500ms when clients are connected
-- **SSE** — Falls back to Server-Sent Events with localhost-only CORS rules
-- **Fast Metrics** — Separate timer sends lightweight `_fast` packets for RAM, CPU, commit, disk, timestamps, trends, and sparklines
-- **HTTP Polling** — Last resort fallback to `/data` endpoint with configurable interval
-- `_fast` packets never replace tables, groups, startup items, services, drives, adapters, or process inventories
+- Backend: `src/backend/*.ps1`
+- Frontend: `src/web/*`
+- Generated outputs: `pcmon.ps1`, `dist/index.html`
 
-### Refresh Rate
-- Configurable from Settings tab (500ms - 10s)
-- Default: 500 ms
-- Minimum: 500 ms enforced server-side
+Rebuild after source changes:
 
-## Requirements
+```powershell
+.\src\build.ps1
+```
 
-- Windows with PowerShell 5.1+ or PowerShell Core (pwsh)
-- Web browser for the dashboard
-- Admin privileges for full accuracy (optional)
+The build strips backend region markers, removes BOMs, inlines frontend CSS/JS, and validates duplicate PowerShell function definitions.
 
-## Design Principles
+## Runtime Files
 
-- **Local-first**: all data stays on your machine
-- **Diagnostic-focused**: raw metrics with actionable interpretation
-- **PowerShell-first**: native Windows access without external dependencies
-- **Lightweight**: plain HTML/CSS/JS, no React
-- **One core, multiple entry modes**: direct PS1, CLI package, optional desktop shell
+pcmon stores local runtime state in port-scoped files so multiple instances do not collide:
 
-## Security
+```text
+$env:TEMP\pcmon_live_cache_<port>.json
+$env:TEMP\pcmon_refresh_rate_<port>.txt
+$env:TEMP\pcmon_errors_<port>.log
+```
 
-- Process actions require confirmation header (`X-PCMON-Confirm: 1`)
-- Protected system processes cannot be killed, suspended, or resumed
-- Input and method validation on API endpoints
-- Snapshot IDs are validated before lookup, compare, export, or delete
-- SSE uses the same localhost-only origin rule as the rest of the local API
-- No shell-string execution
-- XSS protection in dashboard (uses `esc()` function)
-- Printable report values are HTML-escaped before interpolation
+Snapshots and configuration stay in the repository working directory unless the user moves the project.
+
+## Security Model
+
+- Localhost-only diagnostics server.
+- No telemetry or outbound cloud dependency.
+- No shell-string execution for process actions.
+- Method and input validation at API boundaries.
+- Snapshot IDs are validated before lookup, compare, export, or delete.
+- Process IDs are parsed as numeric values.
+- Kill, suspend, and resume require `X-PCMON-Confirm: 1`.
+- Protected system processes are blocked from kill, suspend, and resume actions.
+- Dashboard and report values are HTML-escaped before rendering.
+- SSE uses localhost-only CORS rules, not wildcard `*`.
+
+See [SECURITY.md](SECURITY.md) for more detail.
+
+## Development
+
+Recommended validation before committing:
+
+```powershell
+.\src\build.ps1
+node --check src\web\src\1-config.js
+node --check src\web\src\2-utils.js
+node --check src\web\src\3-stream.js
+node --check src\web\src\4-api.js
+node --check src\web\src\5-render.js
+```
+
+For runtime smoke testing:
+
+```powershell
+.\pcmon.ps1 -NoOpen -Debug -Port 9876
+Invoke-RestMethod http://localhost:9876/health
+Invoke-RestMethod http://localhost:9876/data | ConvertTo-Json -Depth 20
+```
+
+## Documentation
+
+- [CHANGELOG.md](CHANGELOG.md) - notable changes
+- [CONTRIBUTING.md](CONTRIBUTING.md) - contribution workflow
+- [SECURITY.md](SECURITY.md) - security policy and local API boundary
+- [docs/tree.md](docs/tree.md) - source tree and generated artifacts
+- [wallpaper/DEBUG.md](wallpaper/DEBUG.md) - debug endpoints and troubleshooting
 
 ## License
 
