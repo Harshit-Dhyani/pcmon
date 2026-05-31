@@ -38,7 +38,6 @@ Write-Host ""
 
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://${HOSTNAME}:$Port/")
-$listener.TimeoutManager.RequestQueue = New-Object System.TimeSpan(0, 2, 0)
 
 $DIST_INDEX = Join-Path $DIST_DIR "index.html"
 if (Test-Path $DIST_INDEX) {
@@ -54,7 +53,13 @@ if (Test-Path $DIST_INDEX) {
 $wallpaperFile = Join-Path $SCRIPT_DIR "wallpaper\index.html"
 if (Test-Path $wallpaperFile) { $script:StaticFiles['wallpaper.html'] = @{ data = [System.IO.File]::ReadAllBytes($wallpaperFile); type = 'text/html; charset=utf-8' } }
 
-$listener.Start()
+try {
+    $listener.Start()
+} catch {
+    Write-Host "[pcmon] Failed to start local HTTP listener on $base`: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Err "Listener start failed: $($_.Exception.Message)"
+    exit 1
+}
 
 $script:refreshRateFile = Join-Path $env:TEMP "pcmon_refresh_rate_$Port.txt"
 $profilePathsFile = Join-Path $env:TEMP "pcmon_profile_paths_$Port.json"
@@ -75,7 +80,7 @@ Register-ObjectEvent -InputObject $wsBroadcastTimer -EventName Elapsed -Action {
                 }
             }
         }
-    } catch {}
+    } catch { Write-Log "WebSocket cache broadcast failed: $($_.Exception.Message)" "DEBUG" }
 } | Out-Null
 $wsBroadcastTimer.Start()
 
@@ -109,7 +114,7 @@ function Get-FastMetrics {
             disk_pct = [math]::Round((Get-CounterSampleValue -Samples $samples -Pattern '\physicaldisk(_total)\% disk time'), 1)
             _fast = $true
         }
-    } catch { return $null }
+    } catch { Write-Log "Fast metric collection failed: $($_.Exception.Message)" "DEBUG"; return $null }
 }
 
 $fastTimer = New-Object System.Timers.Timer
@@ -123,7 +128,7 @@ Register-ObjectEvent -InputObject $fastTimer -EventName Elapsed -Action {
     try {
         $data = Get-FastMetrics
         if ($data) { Broadcast-WebSocketData $data }
-    } catch {}
+    } catch { Write-Log "Fast broadcast failed: $($_.Exception.Message)" "DEBUG" }
 } | Out-Null
 $fastTimer.Start()
 
@@ -135,6 +140,8 @@ $profilePathsJson = @(
     $PROFILE.CurrentUserCurrentHost
 ) | Where-Object { $_ } | ConvertTo-Json -Compress
 $profilePathsJson | Out-File -FilePath $profilePathsFile -Encoding UTF8 -Force
+
+Start-BackgroundCollector -CacheFile $cacheFile -RefreshRateFile $script:refreshRateFile -ProfilePathsFile $profilePathsFile
 
 $rateCheckTimer = New-Object System.Timers.Timer
 $rateCheckTimer.Interval = 2000
@@ -148,7 +155,7 @@ Register-ObjectEvent -InputObject $rateCheckTimer -EventName Elapsed -Action {
                 $script:FastUpdateInterval = $newRate
             }
         }
-    } catch {}
+    } catch { Write-Log "Refresh rate timer failed: $($_.Exception.Message)" "DEBUG" }
 } | Out-Null
 $rateCheckTimer.Start()
 
@@ -160,7 +167,7 @@ Register-ObjectEvent -InputObject $cleanupTimer -EventName Elapsed -Action {
     foreach ($ws in @($script:WSClients)) {
         try { if ($ws.State -ne 'Open') { $dead.Add($ws) } } catch { $dead.Add($ws) }
     }
-    foreach ($d in $dead) { try { $script:WSClients.Remove($d) } catch {} }
+    foreach ($d in $dead) { try { $script:WSClients.Remove($d) } catch { Write-Log "WebSocket cleanup failed: $($_.Exception.Message)" "DEBUG" } }
     $errCount = $script:Errors.Count
     if ($errCount -gt 100) { $script:Errors = @($script:Errors | Select-Object -Last 100) }
     if ($script:DebugMode -and $dead.Count -gt 0) { Write-Host "[DEBUG] Cleanup removed $($dead.Count) stale WS clients" -ForegroundColor DarkGray }
@@ -250,6 +257,102 @@ Write-Host ""
 
 $script:BroadcastInterval = 100
 
+function Read-JsonFileSafe {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return $null }
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+        try {
+            $raw = [System.IO.File]::ReadAllText($Path)
+            if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+            return $raw | ConvertFrom-Json -ErrorAction Stop
+        } catch {
+            if ($attempt -eq 2) { Write-Log "JSON read failed for $Path`: $($_.Exception.Message)" "DEBUG" }
+            Start-Sleep -Milliseconds 30
+        }
+    }
+    return $null
+}
+
+function New-LoadingData {
+    $uptime = 0
+    try { $uptime = [math]::Round((New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds) } catch { Write-Log "Loading payload uptime calculation failed: $($_.Exception.Message)" "DEBUG" }
+    return @{
+        ts = (Get-Date -Format 'HH:mm:ss')
+        hostname = $env:COMPUTERNAME
+        os_caption = 'Collecting...'
+        total_procs = 0
+        ram_pct = $null
+        ram_avail_mb = $null
+        ram_total_gb = $null
+        commit_pct = $null
+        commit_gb = $null
+        limit_gb = $null
+        cpu_pct = $null
+        disk_pct = $null
+        top_ram = @()
+        top_private = @()
+        top_cpu = @()
+        all_processes = @()
+        suspicious = @()
+        disks = @()
+        startup = @()
+        pagefile = @()
+        heavy_services = @()
+        ps_profiles = @()
+        groups = @{ browser = @{ ws_mb = 0; count = 0 }; dev_tools = @{ ws_mb = 0; count = 0 }; security = @{ ws_mb = 0; count = 0 } }
+        gpu = @{ available = $false; adapters = @(); engines_supported = $false; status_text = 'Collecting GPU data...' }
+        network = @{ status_text = 'Collecting network data...'; adapter_count = 0; adapters = @() }
+        insights = @('Collecting first live sample.')
+        collection_state = 'warming'
+        cache_age_ms = $null
+        subsystems = @{ counters = 'warming'; processes = 'warming'; gpu = 'warming'; network = 'warming'; static = 'warming' }
+        errors_recent = @($script:Errors | Select-Object -Last 5)
+        uptime_seconds = $uptime
+        _perf_ms = 0
+        _loading = $true
+    }
+}
+
+function Get-CurrentData {
+    $data = Read-JsonFileSafe -Path $cacheFile
+    if ($data) {
+        try {
+            $fi = Get-Item $cacheFile -ErrorAction SilentlyContinue
+            if ($fi) { $data.cache_age_ms = [int]((Get-Date) - $fi.LastWriteTime).TotalMilliseconds }
+        } catch { Write-Log "Cache age calculation failed: $($_.Exception.Message)" "DEBUG" }
+        return $data
+    }
+    if ($script:LiveDataCache) { return $script:LiveDataCache }
+    $uptimeSeconds = 0
+    try { $uptimeSeconds = (New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds } catch { Write-Log "Fallback uptime calculation failed: $($_.Exception.Message)" "DEBUG" }
+    if ($uptimeSeconds -ge 5) {
+        Write-Log "No background cache after warmup; using synchronous fallback collection." "DEBUG"
+        return Get-LiveData
+    }
+    return New-LoadingData
+}
+
+function Require-Method {
+    param($response, [string]$Actual, [string[]]$Allowed)
+    if ($Allowed -contains $Actual) { return $true }
+    $response.Headers.Add("Allow", ($Allowed -join ", "))
+    Send-JsonError $response 405 "Method not allowed"
+    return $false
+}
+
+function Send-NotFound($response, [string]$Message = "Not found") {
+    Send-JsonError $response 404 $Message
+}
+
+function Get-ReportRows {
+    param($Data)
+    $insights = @($Data.insights | ForEach-Object { "<div class='insight'>$(ConvertTo-HtmlEscaped $_)</div>" }) -join "`n"
+    $topRam = @($Data.top_ram | Select-Object -First 20 | ForEach-Object { "<tr><td>$(ConvertTo-HtmlEscaped $_.name)</td><td>$([int]$_.pid)</td><td>$([math]::Round($_.ws_mb))</td><td>$([math]::Round($_.private_mb))</td><td>$([math]::Round($_.cpu_s))</td></tr>" }) -join "`n"
+    $topCpu = @($Data.top_cpu | Select-Object -First 20 | ForEach-Object { "<tr><td>$(ConvertTo-HtmlEscaped $_.name)</td><td>$([int]$_.pid)</td><td>$([math]::Round($_.cpu_s))</td><td>$([math]::Round($_.ws_mb))</td></tr>" }) -join "`n"
+    $drives = @($Data.disks | ForEach-Object { "<tr><td>$(ConvertTo-HtmlEscaped $_.drive)</td><td>$(ConvertTo-HtmlEscaped $_.label)</td><td>$([math]::Round($_.total_gb))</td><td>$([math]::Round($_.free_gb))</td><td>$([math]::Round($_.used_gb))</td><td>$([math]::Round($_.pct))%</td></tr>" }) -join "`n"
+    return @{ insights = $insights; top_ram = $topRam; top_cpu = $topCpu; drives = $drives }
+}
+
 try {
     while ($listener.IsListening -and -not $script:shuttingDown) {
         try {
@@ -267,10 +370,11 @@ try {
         $path = $request.Url.LocalPath
 
         if ($path -eq "/health") {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
             # Keep /health cheap and always available, even if the cache is still warming.
             $ts = Get-Date -Format 'HH:mm:ss'
             $uptime = 0
-            try { $uptime = [math]::Round((New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds) } catch {}
+            try { $uptime = [math]::Round((New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds) } catch { Write-Log "Health uptime calculation failed: $($_.Exception.Message)" "DEBUG" }
             $json = "{`"status`":`"ok`",`"ts`":`"$ts`",`"uptime_seconds`":$uptime}"
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
             $response.ContentType = "application/json"
@@ -278,9 +382,10 @@ try {
             Send-Response $response $buffer "application/json"
         }
         elseif ($path -eq "/errors") {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
             $osCaption = if ($script:CachedStatic -and $script:CachedStatic.OS) { $script:CachedStatic.OS.Caption } else { 'Unknown' }
             $uptime = 0
-            try { $uptime = [math]::Round((New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds) } catch {}
+            try { $uptime = [math]::Round((New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds) } catch { Write-Log "Error uptime calculation failed: $($_.Exception.Message)" "DEBUG" }
             $lastErrors = @()
             if ($script:Errors.Count -gt 0) { $lastErrors = @($script:Errors)[-20..-1] }
             $errList = ($lastErrors | Where-Object { $_ -is [string] -and $_ -ne "" } | ForEach-Object { '"' + $_.Replace('\','\\').Replace('"','\"') + '"' } | Join-String -Separator ',')
@@ -292,20 +397,22 @@ try {
             Send-Response $response $buffer "application/json"
         }
         elseif ($path -eq "/logs") {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
             $buffer = [System.Text.Encoding]::UTF8.GetBytes(($script:Errors -join "`n"))
             Send-Response $response $buffer "text/plain"
         }
         elseif ($path -eq "/debug") {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
             $staticFileCount = 0
-            try { $staticFileCount = [int](@($script:StaticFiles.Keys).Count) } catch {}
+            try { $staticFileCount = [int](@($script:StaticFiles.Keys).Count) } catch { Write-Log "Debug static count failed: $($_.Exception.Message)" "DEBUG" }
             $wsClientCount = 0
-            try { $wsClientCount = [int]$script:WSClients.Count } catch {}
+            try { $wsClientCount = [int]$script:WSClients.Count } catch { Write-Log "Debug WS count failed: $($_.Exception.Message)" "DEBUG" }
             $connMethod = ""
-            try { $connMethod = [string]$script:ConnectionMethod } catch {}
+            try { $connMethod = [string]$script:ConnectionMethod } catch { Write-Log "Debug connection method failed: $($_.Exception.Message)" "DEBUG" }
             $bcastMs = 0
-            try { $bcastMs = [int]$script:WSBroadcastInterval } catch {}
+            try { $bcastMs = [int]$script:WSBroadcastInterval } catch { Write-Log "Debug broadcast interval failed: $($_.Exception.Message)" "DEBUG" }
             $cacheExpiry = ""
-            try { $cacheExpiry = [string]$script:StaticCacheExpiry.ToString('o') } catch {}
+            try { $cacheExpiry = [string]$script:StaticCacheExpiry.ToString('o') } catch { Write-Log "Debug cache expiry failed: $($_.Exception.Message)" "DEBUG" }
             $startTime = [string](Get-Date).ToString('o')
             $json = "{`"start_time`":`"$startTime`",`"cache_expiry`":`"$cacheExpiry`",`"cached_services_count`":$(@($script:CachedStatic.Services).Count),`"cached_drives_count`":$(@($script:CachedStatic.Drives).Count),`"commandlines_cached`":$($script:CommandLines.Count),`"static_files`":$staticFileCount,`"ws_clients`":$wsClientCount,`"connection_method`":`"$connMethod`",`"broadcast_interval_ms`":$bcastMs}"
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
@@ -314,7 +421,8 @@ try {
             Send-Response $response $buffer "application/json"
         }
         elseif ($path -eq "/data") {
-            $data = Get-LiveData
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
+            $data = Get-CurrentData
             if ($null -eq $data) { $data = _CollectLiveData }
             $json = $data | ConvertTo-Json -Depth 20 -Compress
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
@@ -322,13 +430,24 @@ try {
             $response.ContentLength64 = $buffer.Length
             Send-Response $response $buffer "application/json"
         }
-        elseif ($path -match '^/api/snapshots$' -and $request.HttpMethod -eq "GET") {
+        elseif ($path -match '^/api/snapshots$') {
+            if (-not (Require-Method $response $request.HttpMethod @("GET", "POST"))) { continue }
+            if ($request.HttpMethod -eq "POST") {
+                $label = ""
+                try {
+                    $body = [System.IO.StreamReader]::new($request.InputStream).ReadToEnd()
+                    if ($body) { $parsed = $body | ConvertFrom-Json -ErrorAction Stop; if ($parsed.label) { $label = [string]$parsed.label } }
+                } catch { Write-Log "Snapshot save request parse failed: $($_.Exception.Message)" "DEBUG"; Send-JsonError $response 400 "Invalid snapshot request"; continue }
+                $result = Save-Snapshot -Label $label
+                Send-JsonObject $response $result
+                continue
+            }
             $files = Get-SnapshotFiles
             $list = @($files | ForEach-Object {
                 try {
                     $content = Get-Content $_.FullName -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
                     @{ id = $content.id; ts = $content.ts; label = $content.label; filename = $_.Name }
-                } catch { $null }
+                } catch { Write-Log "Snapshot metadata read failed: $($_.Exception.Message)" "DEBUG"; $null }
             } | Where-Object { $_ })
             $json = if ($list) { $list | ConvertTo-Json -Compress } else { '[]' }
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
@@ -336,23 +455,11 @@ try {
             $response.ContentLength64 = $buffer.Length
             Send-Response $response $buffer "application/json"
         }
-        elseif ($path -match '^/api/snapshots$' -and $request.HttpMethod -eq "POST") {
-            $label = ""
-            try {
-                $body = [System.IO.StreamReader]::new($request.InputStream).ReadToEnd()
-                if ($body) { $parsed = $body | ConvertFrom-Json; if ($parsed.label) { $label = $parsed.label } }
-            } catch {}
-            $result = Save-Snapshot -Label $label
-            $json = $result | ConvertTo-Json -Compress
-            $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
-            $response.ContentType = "application/json"
-            $response.ContentLength64 = $buffer.Length
-            Send-Response $response $buffer "application/json"
-        }
         elseif ($path -match '^/api/snapshots/([^/]+)$') {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
             $snapId = $matches[1]
-            $files = Get-SnapshotFiles
-            $snapshotFile = $files | Where-Object { $_.BaseName -eq "snapshot_$snapId" } | Select-Object -First 1
+            if (-not (Test-SnapshotId -Id $snapId)) { Send-JsonError $response 400 "Invalid snapshot ID"; continue }
+            $snapshotFile = Get-SnapshotFileById -Id $snapId
             if ($snapshotFile) {
                 $content = Get-Content $snapshotFile.FullName -Raw
                 $buffer = [System.Text.Encoding]::UTF8.GetBytes($content)
@@ -360,12 +467,13 @@ try {
                 $response.ContentLength64 = $buffer.Length
                 Send-Response $response $buffer
             } else {
-                $response.StatusCode = 404
-                $response.ContentLength64 = 0
+                Send-NotFound $response "Snapshot not found"
             }
         }
-        elseif ($path -match '^/api/snapshots/([^/]+)/compare$' -and $request.HttpMethod -eq "POST") {
+        elseif ($path -match '^/api/snapshots/([^/]+)/compare$') {
+            if (-not (Require-Method $response $request.HttpMethod @("POST"))) { continue }
             $snapId = $matches[1]
+            if (-not (Test-SnapshotId -Id $snapId)) { Send-JsonError $response 400 "Invalid snapshot ID"; continue }
             $result = Compare-Snapshots -SnapshotId $snapId
             $json = $result | ConvertTo-Json -Depth 20 -Compress
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
@@ -374,9 +482,10 @@ try {
             Send-Response $response $buffer "application/json"
         }
         elseif ($path -match '^/api/snapshots/([^/]+)/export$') {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
             $snapId = $matches[1]
-            $files = Get-SnapshotFiles
-            $snapshotFile = $files | Where-Object { $_.BaseName -eq "snapshot_$snapId" } | Select-Object -First 1
+            if (-not (Test-SnapshotId -Id $snapId)) { Send-JsonError $response 400 "Invalid snapshot ID"; continue }
+            $snapshotFile = Get-SnapshotFileById -Id $snapId
             if ($snapshotFile) {
                 $content = Get-Content $snapshotFile.FullName -Raw
                 $jsonObj = $content | ConvertFrom-Json
@@ -388,14 +497,14 @@ try {
                 $response.ContentLength64 = $buffer.Length
                 Send-Response $response $buffer
             } else {
-                $response.StatusCode = 404
-                $response.ContentLength64 = 0
+                Send-NotFound $response "Snapshot not found"
             }
         }
         elseif ($path -match '^/api/snapshots/([^/]+)/export\.csv$') {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
             $snapId = $matches[1]
-            $files = Get-SnapshotFiles
-            $snapshotFile = $files | Where-Object { $_.BaseName -eq "snapshot_$snapId" } | Select-Object -First 1
+            if (-not (Test-SnapshotId -Id $snapId)) { Send-JsonError $response 400 "Invalid snapshot ID"; continue }
+            $snapshotFile = Get-SnapshotFileById -Id $snapId
             if ($snapshotFile) {
                 $content = Get-Content $snapshotFile.FullName -Raw
                 $jsonObj = $content | ConvertFrom-Json
@@ -419,14 +528,14 @@ try {
                 $buffer = [System.Text.Encoding]::UTF8.GetBytes($csvContent)
                 Send-Response $response $buffer "text/csv" "attachment; filename=`"$filename`""
             } else {
-                $response.StatusCode = 404
-                $response.ContentLength64 = 0
+                Send-NotFound $response "Snapshot not found"
             }
         }
-        elseif ($path -match '^/api/snapshots/([^/]+)/delete$' -and $request.HttpMethod -eq "POST") {
+        elseif ($path -match '^/api/snapshots/([^/]+)/delete$') {
+            if (-not (Require-Method $response $request.HttpMethod @("POST"))) { continue }
             $snapId = $matches[1]
-            $files = Get-SnapshotFiles
-            $snapshotFile = $files | Where-Object { $_.BaseName -eq "snapshot_$snapId" } | Select-Object -First 1
+            if (-not (Test-SnapshotId -Id $snapId)) { Send-JsonError $response 400 "Invalid snapshot ID"; continue }
+            $snapshotFile = Get-SnapshotFileById -Id $snapId
             if ($snapshotFile) {
                 try {
                     Remove-Item $snapshotFile.FullName -Force -ErrorAction Stop
@@ -440,11 +549,10 @@ try {
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
             Send-Response $response $buffer "application/json"
         }
-        elseif ($path -match '^/api/process/(\d+)/kill$' -and $request.HttpMethod -eq "POST") {
+        elseif ($path -match '^/api/process/(\d+)/kill$') {
+            if (-not (Require-Method $response $request.HttpMethod @("POST"))) { continue }
             if ($request.Headers.Get("X-PCMON-Confirm") -ne "1") {
-                $response.StatusCode = 403
-                $response.ContentLength64 = 0
-                Send-Response $response $null "application/json"
+                Send-JsonError $response 403 "Missing confirmation header"
                 continue
             }
             $procId = [int]$matches[1]
@@ -455,11 +563,10 @@ try {
             $response.ContentLength64 = $buffer.Length
             Send-Response $response $buffer "application/json"
         }
-        elseif ($path -match '^/api/process/(\d+)/suspend$' -and $request.HttpMethod -eq "POST") {
+        elseif ($path -match '^/api/process/(\d+)/suspend$') {
+            if (-not (Require-Method $response $request.HttpMethod @("POST"))) { continue }
             if ($request.Headers.Get("X-PCMON-Confirm") -ne "1") {
-                $response.StatusCode = 403
-                $response.ContentLength64 = 0
-                Send-Response $response $null "application/json"
+                Send-JsonError $response 403 "Missing confirmation header"
                 continue
             }
             $procId = [int]$matches[1]
@@ -470,11 +577,10 @@ try {
             $response.ContentLength64 = $buffer.Length
             Send-Response $response $buffer "application/json"
         }
-        elseif ($path -match '^/api/process/(\d+)/resume$' -and $request.HttpMethod -eq "POST") {
+        elseif ($path -match '^/api/process/(\d+)/resume$') {
+            if (-not (Require-Method $response $request.HttpMethod @("POST"))) { continue }
             if ($request.Headers.Get("X-PCMON-Confirm") -ne "1") {
-                $response.StatusCode = 403
-                $response.ContentLength64 = 0
-                Send-Response $response $null "application/json"
+                Send-JsonError $response 403 "Missing confirmation header"
                 continue
             }
             $procId = [int]$matches[1]
@@ -486,20 +592,17 @@ try {
             Send-Response $response $buffer "application/json"
         }
         elseif ($path -eq "/api/report") {
-            if ($request.HttpMethod -ne "GET") {
-                $response.StatusCode = 405
-                $response.ContentLength64 = 0
-                Send-Response $response $null "application/json"
-                continue
-            }
-            if (Test-Path $cacheFile) {
-                try { $data = Get-Content $cacheFile -Raw | ConvertFrom-Json } catch { $data = Get-LiveData }
-            } else { $data = Get-LiveData }
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
+            $data = Get-CurrentData
+            $reportRows = Get-ReportRows -Data $data
+            $reportTs = ConvertTo-HtmlEscaped $data.ts
+            $reportHost = ConvertTo-HtmlEscaped $data.hostname
+            $reportOs = ConvertTo-HtmlEscaped $data.os_caption
             $html = @"
 <!DOCTYPE html>
 <html>
 <head>
-<title>PCMON System Report - $($data.ts)</title>
+<title>PCMON System Report - $reportTs</title>
 <style>
 body { font-family: Arial, sans-serif; padding: 20px; max-width: 1200px; margin: 0 auto; }
 h1 { color: #333; }
@@ -517,10 +620,10 @@ th { background: #f5f5f5; }
 </head>
 <body>
 <h1>PCMON System Report</h1>
-<p>Generated: $($data.ts) | Host: $($data.hostname)</p>
+<p>Generated: $reportTs | Host: $reportHost</p>
 
 <div class="system-info">
-<p><strong>OS:</strong> $($data.os_caption)</p>
+<p><strong>OS:</strong> $reportOs</p>
 <p><strong>Total Processes:</strong> $($data.total_procs)</p>
 </div>
 
@@ -542,24 +645,24 @@ th { background: #f5f5f5; }
 </table>
 
 <h2>Insights</h2>
-$($data.insights | ForEach-Object { "<div class='insight'>$_</div>" })
+$($reportRows.insights)
 
 <h2>Top Processes (RAM)</h2>
 <table>
 <tr><th>Name</th><th>PID</th><th>Working Set (MB)</th><th>Private (MB)</th><th>CPU Time (s)</th></tr>
-$($data.top_ram | Select-Object -First 20 | ForEach-Object { "<tr><td>$($_.name)</td><td>$($_.pid)</td><td>$([math]::Round($_.ws_mb))</td><td>$([math]::Round($_.private_mb))</td><td>$([math]::Round($_.cpu_s))</td></tr>" })
+$($reportRows.top_ram)
 </table>
 
 <h2>Top Processes (CPU)</h2>
 <table>
 <tr><th>Name</th><th>PID</th><th>CPU Time (s)</th><th>Working Set (MB)</th></tr>
-$($data.top_cpu | Select-Object -First 20 | ForEach-Object { "<tr><td>$($_.name)</td><td>$($_.pid)</td><td>$([math]::Round($_.cpu_s))</td><td>$([math]::Round($_.ws_mb))</td></tr>" })
+$($reportRows.top_cpu)
 </table>
 
 <h2>Drives</h2>
 <table>
 <tr><th>Drive</th><th>Label</th><th>Total GB</th><th>Free GB</th><th>Used GB</th><th>Usage %</th></tr>
-$($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><td>$([math]::Round($_.total_gb))</td><td>$([math]::Round($_.free_gb))</td><td>$([math]::Round($_.used_gb))</td><td>$([math]::Round($_.pct))%</td></tr>" })
+$($reportRows.drives)
 </table>
 
 <h2>Process Groups</h2>
@@ -581,20 +684,17 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
             Send-Response $response $buffer "text/html; charset=utf-8"
         }
         elseif ($path -eq "/api/report/download") {
-            if ($request.HttpMethod -ne "GET") {
-                $response.StatusCode = 405
-                $response.ContentLength64 = 0
-                Send-Response $response $null "application/json"
-                continue
-            }
-            if (Test-Path $cacheFile) {
-                try { $data = Get-Content $cacheFile -Raw | ConvertFrom-Json } catch { $data = Get-LiveData }
-            } else { $data = Get-LiveData }
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
+            $data = Get-CurrentData
+            $reportRows = Get-ReportRows -Data $data
+            $reportTs = ConvertTo-HtmlEscaped $data.ts
+            $reportHost = ConvertTo-HtmlEscaped $data.hostname
+            $reportOs = ConvertTo-HtmlEscaped $data.os_caption
             $html = @"
 <!DOCTYPE html>
 <html>
 <head>
-<title>PCMON System Report - $($data.ts)</title>
+<title>PCMON System Report - $reportTs</title>
 <style>
 body { font-family: Arial, sans-serif; padding: 20px; max-width: 1200px; margin: 0 auto; }
 h1 { color: #333; }
@@ -611,10 +711,10 @@ th { background: #f5f5f5; }
 </head>
 <body>
 <h1>PCMON System Report</h1>
-<p>Generated: $($data.ts) | Host: $($data.hostname)</p>
+<p>Generated: $reportTs | Host: $reportHost</p>
 
 <div class="system-info">
-<p><strong>OS:</strong> $($data.os_caption)</p>
+<p><strong>OS:</strong> $reportOs</p>
 <p><strong>Total Processes:</strong> $($data.total_procs)</p>
 </div>
 
@@ -636,24 +736,24 @@ th { background: #f5f5f5; }
 </table>
 
 <h2>Insights</h2>
-$($data.insights | ForEach-Object { "<div class='insight'>$_</div>" })
+$($reportRows.insights)
 
 <h2>Top Processes (RAM)</h2>
 <table>
 <tr><th>Name</th><th>PID</th><th>Working Set (MB)</th><th>Private (MB)</th><th>CPU Time (s)</th></tr>
-$($data.top_ram | Select-Object -First 20 | ForEach-Object { "<tr><td>$($_.name)</td><td>$($_.pid)</td><td>$([math]::Round($_.ws_mb))</td><td>$([math]::Round($_.private_mb))</td><td>$([math]::Round($_.cpu_s))</td></tr>" })
+$($reportRows.top_ram)
 </table>
 
 <h2>Top Processes (CPU)</h2>
 <table>
 <tr><th>Name</th><th>PID</th><th>CPU Time (s)</th><th>Working Set (MB)</th></tr>
-$($data.top_cpu | Select-Object -First 20 | ForEach-Object { "<tr><td>$($_.name)</td><td>$($_.pid)</td><td>$([math]::Round($_.cpu_s))</td><td>$([math]::Round($_.ws_mb))</td></tr>" })
+$($reportRows.top_cpu)
 </table>
 
 <h2>Drives</h2>
 <table>
 <tr><th>Drive</th><th>Label</th><th>Total GB</th><th>Free GB</th><th>Used GB</th><th>Usage %</th></tr>
-$($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><td>$([math]::Round($_.total_gb))</td><td>$([math]::Round($_.free_gb))</td><td>$([math]::Round($_.used_gb))</td><td>$([math]::Round($_.pct))%</td></tr>" })
+$($reportRows.drives)
 </table>
 
 <h2>Process Groups</h2>
@@ -672,9 +772,7 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
             Send-Response $response $buffer "text/html; charset=utf-8" "attachment; filename=`"$filename`""
         }
         elseif ($path -eq "/api/thresholds" -and $request.HttpMethod -ne "GET") {
-            $response.StatusCode = 405
-            $response.ContentLength64 = 0
-            Send-Response $response $null "application/json"
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
             continue
         }
         elseif ($path -eq "/api/thresholds" -and $request.HttpMethod -eq "GET") {
@@ -685,7 +783,7 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
             Send-Response $response $buffer "application/json"
         }
         elseif ($path -eq "/api/config" -and $request.HttpMethod -eq "GET") {
-            $json = $script:AlertThresholds | ConvertTo-Json -Compress
+            $json = @{ thresholds = $script:AlertThresholds } | ConvertTo-Json -Compress
             $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
             $response.ContentType = "application/json"
             $response.ContentLength64 = $buffer.Length
@@ -700,7 +798,7 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
                         if ($script:AlertThresholds.ContainsKey($key)) {
                             $value = $parsed.$key
                             # Validate numeric type for threshold values
-                            if ($value -is [double] -or $value -is [int] -or $value -is [float]) {
+                            if ($value -is [double] -or $value -is [int] -or $value -is [float] -or $value -is [long]) {
                                 $script:AlertThresholds[$key] = $value
                             }
                         }
@@ -719,12 +817,7 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
             Send-Response $response $buffer "application/json"
         }
         elseif ($path -eq "/api/bootstrap") {
-            if ($request.HttpMethod -ne "GET") {
-                $response.StatusCode = 405
-                $response.ContentLength64 = 0
-                Send-Response $response $null "application/json"
-                continue
-            }
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
             $json = @{
                 csrf_token = [guid]::NewGuid().ToString()
                 thresholds = $script:AlertThresholds
@@ -734,7 +827,8 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
             $response.ContentLength64 = $buffer.Length
             Send-Response $response $buffer "application/json"
         }
-        elseif ($path -eq "/api/refresh-rate" -and $request.HttpMethod -eq "POST") {
+        elseif ($path -eq "/api/refresh-rate") {
+            if (-not (Require-Method $response $request.HttpMethod @("POST"))) { continue }
             try {
                 $body = [System.IO.StreamReader]::new($request.InputStream).ReadToEnd()
                 if ($body) {
@@ -757,18 +851,13 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
             Send-Response $response $buffer "application/json"
         }
         elseif ($path -eq "/api/info") {
-            if ($request.HttpMethod -ne "GET") {
-                $response.StatusCode = 405
-                $response.ContentLength64 = 0
-                Send-Response $response $null "application/json"
-                continue
-            }
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
             $uptime = 0
-            try { $uptime = [math]::Round((New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds) } catch {}
+            try { $uptime = [math]::Round((New-TimeSpan -Start $script:StartTime -End (Get-Date)).TotalSeconds) } catch { Write-Log "Info uptime calculation failed: $($_.Exception.Message)" "DEBUG" }
             $conn = ""
-            try { $conn = [string]$script:ConnectionMethod } catch {}
+            try { $conn = [string]$script:ConnectionMethod } catch { Write-Log "Info connection method failed: $($_.Exception.Message)" "DEBUG" }
             $wsCount = 0
-            try { $wsCount = [int]$script:WSClients.Count } catch {}
+            try { $wsCount = [int]$script:WSClients.Count } catch { Write-Log "Info WS count failed: $($_.Exception.Message)" "DEBUG" }
             $info = @{
                 method = $conn
                 uptime = $uptime
@@ -781,17 +870,11 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
             $response.ContentLength64 = $buffer.Length
             Send-Response $response $buffer "application/json"
         }
-        elseif ($path -eq "/api/export" -and $request.HttpMethod -eq "GET") {
-            $cacheFile = Join-Path $TEMP_DIR "pcmon_cache_$Port.json"
-            $data = $null
-            if (Test-Path $cacheFile) {
-                try {
-                    $json = [System.IO.File]::ReadAllText($cacheFile)
-                    $data = $json | ConvertFrom-Json -ErrorAction SilentlyContinue
-                } catch { }
-            }
+        elseif ($path -eq "/api/export") {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
+            $data = Get-CurrentData
             if (-not $data) {
-                $data = Get-LiveData -Force
+                $data = Get-LiveData
             }
             $exportObj = @{
                 exported_at = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
@@ -806,7 +889,8 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
             $response.ContentLength64 = $buffer.Length
             Send-Response $response $buffer "application/json"
         }
-        elseif ($path -eq "/stream" -and $request.HttpMethod -eq "GET") {
+        elseif ($path -eq "/stream") {
+            if (-not (Require-Method $response $request.HttpMethod @("GET"))) { continue }
             $upgrade = $request.Headers.Get("Upgrade")
             $secWebSocketKey = $request.Headers.Get("Sec-WebSocket-Key")
             
@@ -824,13 +908,16 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
                     }
                 } catch {
                     $script:ConnectionMethod = "sse"
+                    Write-Log "WebSocket upgrade failed: $($_.Exception.Message)" "DEBUG"
                 }
             } else {
                 try {
                     $response.ContentType = "text/event-stream"
                     $response.Headers.Add("Cache-Control", "no-cache")
                     $response.Headers.Add("Connection", "keep-alive")
-                    $response.Headers.Add("Access-Control-Allow-Origin", "*")
+                    if ($origin -and $origin -match '^http://(localhost|127\.0\.0\.1):\d+$') {
+                        $response.Headers.Set("Access-Control-Allow-Origin", $origin)
+                    }
                     $script:ConnectionMethod = "sse"
                     while ($listener.IsListening -and -not $script:shuttingDown) {
                         try {
@@ -841,12 +928,12 @@ $($data.disks | ForEach-Object { "<tr><td>$($_.drive)</td><td>$($_.label)</td><t
                                     if ($data) {
                                         $json = $data | ConvertTo-Json -Depth 20 -Compress
                                         $payload = [System.Text.Encoding]::UTF8.GetBytes("data: $json`n`n")
-                                        try { $response.OutputStream.Write($payload, 0, $payload.Length); $response.OutputStream.Flush() } catch { break }
+                                        try { $response.OutputStream.Write($payload, 0, $payload.Length); $response.OutputStream.Flush() } catch { Write-Log "SSE client disconnected: $($_.Exception.Message)" "DEBUG"; break }
                                     }
                                 }
                             }
                             Start-Sleep -Milliseconds 50
-                        } catch { break }
+                        } catch { Write-Log "SSE loop failed: $($_.Exception.Message)" "DEBUG"; break }
                     }
                 } catch { if ($script:DebugMode) { Write-Log "SSE error: $($_.Exception.Message)" "DEBUG" } }
                 $response.StatusCode = 200
