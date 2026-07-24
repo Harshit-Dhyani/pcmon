@@ -17,7 +17,7 @@
     "@semantic-release/release-notes-generator": "^14.0.0",
     "copyfiles": "^2.4.1",
     "husky": "^9.0.0",
-    "semantic-release": "^24.0.0"
+    "semantic-release": "^25.0.8"
   },
   "keywords": ["monitoring", "diagnostics", "windows", "system"],
   "license": "MIT"
